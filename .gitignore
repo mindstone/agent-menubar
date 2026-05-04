@@ -1,0 +1,17 @@
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+
+# Local state
+sessions.json
+*.log
