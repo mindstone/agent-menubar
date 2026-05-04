@@ -9,18 +9,28 @@ struct SessionListView: View {
                 Text("Droid sessions")
                     .font(.headline)
                 Spacer()
+                if store.sessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
+                    Button("Clear finished") { store.clearFinished() }
+                        .buttonStyle(.borderless)
+                        .font(.callout)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
-            .padding(.bottom, 4)
+            .padding(.bottom, 6)
 
             Divider()
 
             if store.sessions.isEmpty {
-                Text("No droids yet. Start one in iTerm.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(12)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No droids yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("Open an iTerm tab and run `droid`. Make sure `make install-hooks` was run.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(12)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -28,15 +38,21 @@ struct SessionListView: View {
                             SessionRowView(session: session) {
                                 store.focus(session)
                             }
+                            .contextMenu {
+                                Button("Remove from list") { store.remove(session) }
+                            }
                             Divider()
                         }
                     }
                 }
-                .frame(maxHeight: 400)
+                .frame(maxHeight: 420)
             }
 
             Divider()
-            HStack {
+            HStack(spacing: 12) {
+                Text("\(store.sessions.count) tracked")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(.borderless)
@@ -44,6 +60,6 @@ struct SessionListView: View {
             }
             .padding(8)
         }
-        .frame(width: 360)
+        .frame(width: 380)
     }
 }
