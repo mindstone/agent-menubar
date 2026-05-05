@@ -126,7 +126,7 @@ final class SessionStore: ObservableObject {
 
     @MainActor
     func focus(_ session: DroidSession) {
-        guard let uuid = session.itermSessionId, !uuid.isEmpty else {
+        guard let raw = session.itermSessionId, !raw.isEmpty else {
             DroidNotifier.notify(
                 title: "No iTerm tab bound",
                 body: "This droid wasn't started inside iTerm, or ITERM_SESSION_ID was missing.",
@@ -135,7 +135,25 @@ final class SessionStore: ObservableObject {
             return
         }
         Task.detached {
-            ITermFocuser.focus(itermSessionId: uuid)
+            let result = ITermFocuser.focus(itermSessionId: raw)
+            await MainActor.run {
+                switch result {
+                case .ok:
+                    break
+                case .notFound(let uuid):
+                    DroidNotifier.notify(
+                        title: "Couldn't find that iTerm tab",
+                        body: "Session \(uuid.prefix(8))… isn't open in iTerm anymore. The tab was probably closed.",
+                        urgent: false
+                    )
+                case .appleScriptFailed(let msg):
+                    DroidNotifier.notify(
+                        title: "Couldn't focus iTerm",
+                        body: "AppleScript automation may need to be allowed in System Settings → Privacy & Security → Automation. (\(msg.prefix(120)))",
+                        urgent: false
+                    )
+                }
+            }
         }
     }
 
