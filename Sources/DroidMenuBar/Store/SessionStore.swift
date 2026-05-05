@@ -73,7 +73,7 @@ final class SessionStore: ObservableObject {
             let msg = event.message?.nilIfEmpty ?? "Waiting for input"
             s.lastEvent = msg
             DroidNotifier.notify(
-                title: "Droid is waiting — \(s.repoName ?? cwdURL.lastPathComponent)",
+                title: "? Droid is asking — \(s.repoName ?? cwdURL.lastPathComponent)",
                 body: msg,
                 urgent: true
             )

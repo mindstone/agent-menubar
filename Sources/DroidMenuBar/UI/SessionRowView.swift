@@ -29,10 +29,18 @@ struct SessionRowView: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
     private var statusDot: some View {
-        Circle()
-            .fill(color(for: session.status))
-            .frame(width: 8, height: 8)
+        if session.status == .waitingForInput {
+            Image(systemName: "questionmark.circle.fill")
+                .foregroundStyle(.orange)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 11, height: 11)
+        } else {
+            Circle()
+                .fill(color(for: session.status))
+                .frame(width: 8, height: 8)
+        }
     }
 
     private func color(for status: SessionStatus) -> Color {

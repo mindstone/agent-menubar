@@ -14,7 +14,7 @@ struct MenuBarLabel: View {
             }
         case .attention(let count, _):
             HStack(spacing: 2) {
-                Image(systemName: "exclamationmark.bubble.fill")
+                Image(systemName: "questionmark.bubble.fill")
                 Text("\(count)")
             }
             .foregroundStyle(.orange)
