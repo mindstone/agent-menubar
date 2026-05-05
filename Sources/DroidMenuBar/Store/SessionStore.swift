@@ -1,12 +1,22 @@
 import Foundation
 import SwiftUI
 
+struct TransientBanner: Equatable {
+    enum Tone { case info, warning }
+    let id = UUID()
+    let tone: Tone
+    let text: String
+}
+
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [DroidSession] = []
+    @Published var banner: TransientBanner?
 
     private let pruneTTL: TimeInterval = 24 * 60 * 60      // forget finished sessions after 24h
     private let staleAfterIdle: TimeInterval = 60 * 60     // mark loaded running session stale if > 1h silent
+    private let bannerTTL: TimeInterval = 4
     private let saveDebounce = DispatchQueue(label: "DroidMenuBar.SessionStore.save")
+    private var bannerClearTask: Task<Void, Never>?
 
     init() {
         let loaded = SessionStorePersistence.load()
@@ -70,13 +80,7 @@ final class SessionStore: ObservableObject {
         case "Notification":
             s.status = .waitingForInput
             s.attentionRaisedAt = now
-            let msg = event.message?.nilIfEmpty ?? "Waiting for input"
-            s.lastEvent = msg
-            DroidNotifier.notify(
-                title: "? Droid is asking — \(s.repoName ?? cwdURL.lastPathComponent)",
-                body: msg,
-                urgent: true
-            )
+            s.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
 
         case "UserPromptSubmit":
             s.status = .running
@@ -86,18 +90,11 @@ final class SessionStore: ObservableObject {
         case "Stop":
             s.status = .finished
             s.attentionRaisedAt = nil
-            let preview: String
             if let t = s.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
-                preview = tail
+                s.lastEvent = tail
             } else {
-                preview = "Finished task"
+                s.lastEvent = "Finished task"
             }
-            s.lastEvent = preview
-            DroidNotifier.notify(
-                title: "Droid finished — \(s.repoName ?? cwdURL.lastPathComponent)",
-                body: preview,
-                urgent: false
-            )
 
         case "SessionEnd":
             s.status = .finished
@@ -127,11 +124,7 @@ final class SessionStore: ObservableObject {
     @MainActor
     func focus(_ session: DroidSession) {
         guard let raw = session.itermSessionId, !raw.isEmpty else {
-            DroidNotifier.notify(
-                title: "No iTerm tab bound",
-                body: "This droid wasn't started inside iTerm, or ITERM_SESSION_ID was missing.",
-                urgent: false
-            )
+            showBanner(.warning, "No iTerm tab bound — this droid wasn't started inside iTerm.")
             return
         }
         Task.detached {
@@ -140,21 +133,33 @@ final class SessionStore: ObservableObject {
                 switch result {
                 case .ok:
                     break
-                case .notFound(let uuid):
-                    DroidNotifier.notify(
-                        title: "Couldn't find that iTerm tab",
-                        body: "Session \(uuid.prefix(8))… isn't open in iTerm anymore. The tab was probably closed.",
-                        urgent: false
-                    )
-                case .appleScriptFailed(let msg):
-                    DroidNotifier.notify(
-                        title: "Couldn't focus iTerm",
-                        body: "AppleScript automation may need to be allowed in System Settings → Privacy & Security → Automation. (\(msg.prefix(120)))",
-                        urgent: false
-                    )
+                case .notFound:
+                    self.showBanner(.warning, "iTerm tab not found — it was probably closed.")
+                case .appleScriptFailed:
+                    self.showBanner(.warning, "Couldn't talk to iTerm. Allow automation in System Settings → Privacy & Security → Automation.")
                 }
             }
         }
+    }
+
+    @MainActor
+    private func showBanner(_ tone: TransientBanner.Tone, _ text: String) {
+        let b = TransientBanner(tone: tone, text: text)
+        banner = b
+        bannerClearTask?.cancel()
+        bannerClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(self?.bannerTTL ?? 4) * 1_000_000_000)
+            await MainActor.run {
+                guard let self else { return }
+                if self.banner?.id == b.id { self.banner = nil }
+            }
+        }
+    }
+
+    @MainActor
+    func dismissBanner() {
+        bannerClearTask?.cancel()
+        banner = nil
     }
 
     @MainActor
