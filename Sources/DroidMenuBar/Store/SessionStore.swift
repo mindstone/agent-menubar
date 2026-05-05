@@ -10,6 +10,7 @@ struct TransientBanner: Equatable {
 
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [DroidSession] = []
+    @Published private(set) var menuBarState: MenuBarState = .idle
     @Published var banner: TransientBanner?
 
     private let pruneTTL: TimeInterval = 24 * 60 * 60      // forget finished sessions after 24h
@@ -21,17 +22,23 @@ final class SessionStore: ObservableObject {
     init() {
         let loaded = SessionStorePersistence.load()
         self.sessions = reconcile(loaded)
+        self.menuBarState = Self.computeBarState(from: self.sessions)
         save()
     }
 
     // MARK: - Derived UI state
 
-    var menuBarState: MenuBarState {
+    private static func computeBarState(from sessions: [DroidSession]) -> MenuBarState {
         let active = sessions.filter { $0.status == .running || $0.status == .waitingForInput }
         let waiting = active.filter { $0.status == .waitingForInput }.count
         if active.isEmpty { return .idle }
         if waiting > 0 { return .attention(count: active.count, waiting: waiting) }
         return .tracking(count: active.count)
+    }
+
+    private func recomputeBarState() {
+        let next = Self.computeBarState(from: sessions)
+        if next != menuBarState { menuBarState = next }
     }
 
     // MARK: - Event ingestion
@@ -116,6 +123,7 @@ final class SessionStore: ObservableObject {
 
         sessions[idx!] = s
         sortSessions()
+        recomputeBarState()
         save()
     }
 
@@ -165,12 +173,14 @@ final class SessionStore: ObservableObject {
     @MainActor
     func clearFinished() {
         sessions.removeAll { $0.status == .finished || $0.status == .stale }
+        recomputeBarState()
         save()
     }
 
     @MainActor
     func remove(_ session: DroidSession) {
         sessions.removeAll { $0.id == session.id }
+        recomputeBarState()
         save()
     }
 
