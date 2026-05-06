@@ -5,6 +5,9 @@ Package.resolved
 *.xcodeproj
 DerivedData/
 
+# Generated .app bundle
+build/
+
 # macOS
 .DS_Store
 
