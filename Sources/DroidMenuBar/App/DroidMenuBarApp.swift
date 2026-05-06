@@ -39,10 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.isVisible = true
         item.behavior = []
+        item.autosaveName = "dev.harry.droid-menubar.statusitem"
         if let button = item.button {
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.sendAction(on: [.leftMouseUp])
+            button.imagePosition = .imageLeft
+            button.imageScaling = .scaleProportionallyDown
+            button.font = NSFont.menuBarFont(ofSize: 0)
         }
         self.statusItem = item
 
@@ -90,29 +94,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func render(_ state: MenuBarState) {
         guard let button = statusItem?.button else { return }
-        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+
+        button.image = nil
+        button.contentTintColor = nil
 
         switch state {
         case .idle:
-            button.image = NSImage(systemSymbolName: "wand.and.stars",
-                                   accessibilityDescription: "Droid menu bar — idle")?
-                .withSymbolConfiguration(cfg)
-            button.title = ""
-            button.contentTintColor = nil
-
+            button.attributedTitle = NSAttributedString(
+                string: "🤖",
+                attributes: [.font: NSFont.systemFont(ofSize: 14)]
+            )
         case .tracking(let count):
-            button.image = NSImage(systemSymbolName: "wand.and.stars",
-                                   accessibilityDescription: "Droid menu bar — \(count) active")?
-                .withSymbolConfiguration(cfg)
-            button.title = " \(count)"
-            button.contentTintColor = nil
-
+            button.attributedTitle = NSAttributedString(
+                string: "🤖 \(count)",
+                attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .medium)]
+            )
         case .attention(let count, _):
-            button.image = NSImage(systemSymbolName: "questionmark.bubble.fill",
-                                   accessibilityDescription: "Droid menu bar — \(count) active, droid asking")?
-                .withSymbolConfiguration(cfg)
-            button.title = " \(count)"
-            button.contentTintColor = .systemOrange
+            button.attributedTitle = NSAttributedString(
+                string: "❓ \(count)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+                    .foregroundColor: NSColor.systemOrange
+                ]
+            )
         }
+
+        button.needsDisplay = true
+        NSLog("DroidMenuBar.render: state=\(state) frame=\(button.frame) title='\(button.title)'")
     }
 }
