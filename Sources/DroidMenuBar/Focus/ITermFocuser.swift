@@ -36,7 +36,18 @@ enum ITermFocuser {
                             select w
                             select t
                             select s
+                            try
+                                set index of w to 1
+                            end try
                             activate
+                            try
+                                tell application "System Events"
+                                    tell process "iTerm2"
+                                        set frontmost to true
+                                        perform action "AXRaise" of window 1
+                                    end tell
+                                end tell
+                            end try
                             return "ok"
                         end if
                     end repeat

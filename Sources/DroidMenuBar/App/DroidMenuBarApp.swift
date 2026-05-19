@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusItem = item
 
         let pop = NSPopover()
-        pop.behavior = .transient
+        pop.behavior = .applicationDefined
         pop.animates = true
         pop.contentSize = NSSize(width: 380, height: 480)
         pop.contentViewController = NSHostingController(
@@ -76,7 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(sender)
             removeEventMonitor()
         } else {
+            NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
             addEventMonitor()
         }
     }

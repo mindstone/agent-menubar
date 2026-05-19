@@ -5,28 +5,26 @@ struct SessionRowView: View {
     let onFocus: () -> Void
 
     var body: some View {
-        Button(action: onFocus) {
-            HStack(alignment: .top, spacing: 10) {
-                statusDot
-                    .padding(.top, 4)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.repoName ?? session.cwd.lastPathComponent)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(session.lastEvent)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Text(relativeTime(from: session.lastEventAt))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 10) {
+            statusDot
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.repoName ?? session.cwd.lastPathComponent)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(session.lastEvent)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Text(relativeTime(from: session.lastEventAt))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture { onFocus() }
     }
 
     @ViewBuilder
