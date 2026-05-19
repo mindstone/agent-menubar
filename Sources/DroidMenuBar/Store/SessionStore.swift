@@ -11,33 +11,98 @@ struct TransientBanner: Equatable {
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [DroidSession] = []
     @Published private(set) var menuBarState: MenuBarState = .idle
+    @Published private(set) var aliveItermUUIDs: Set<String> = []
     @Published var banner: TransientBanner?
+
+    /// Sessions to show in the UI: one entry per currently-open iTerm tab,
+    /// representing the most recent droid run in that tab. Sessions without an
+    /// iTerm tab id (e.g. droid invoked outside iTerm) are always passed through.
+    var visibleSessions: [DroidSession] {
+        var latestPerTab: [String: DroidSession] = [:]
+        var orphans: [DroidSession] = []
+        for s in sessions {
+            guard let raw = s.itermSessionId, !raw.isEmpty else {
+                orphans.append(s)
+                continue
+            }
+            let uuid = ITermFocuser.uuidFromRaw(raw)
+            guard aliveItermUUIDs.contains(uuid) else { continue }
+            if let existing = latestPerTab[uuid], existing.lastEventAt >= s.lastEventAt {
+                continue
+            }
+            latestPerTab[uuid] = s
+        }
+        let merged = Array(latestPerTab.values) + orphans
+        return merged.sorted { a, b in
+            func rank(_ st: SessionStatus) -> Int {
+                switch st {
+                case .waitingForInput: return 0
+                case .running:         return 1
+                case .finished:        return 2
+                case .stale:           return 3
+                }
+            }
+            let ra = rank(a.status), rb = rank(b.status)
+            if ra != rb { return ra < rb }
+            return a.lastEventAt > b.lastEventAt
+        }
+    }
 
     private let pruneTTL: TimeInterval = 24 * 60 * 60      // forget finished sessions after 24h
     private let staleAfterIdle: TimeInterval = 60 * 60     // mark loaded running session stale if > 1h silent
     private let bannerTTL: TimeInterval = 4
+    private let inventoryRefreshInterval: TimeInterval = 5
     private let saveDebounce = DispatchQueue(label: "DroidMenuBar.SessionStore.save")
     private var bannerClearTask: Task<Void, Never>?
+    private var inventoryTimer: Timer?
 
     init() {
         let loaded = SessionStorePersistence.load()
         self.sessions = reconcile(loaded)
-        self.menuBarState = Self.computeBarState(from: self.sessions)
+        self.menuBarState = computeBarState()
         save()
+        startInventoryRefresh()
+    }
+
+    deinit {
+        inventoryTimer?.invalidate()
+    }
+
+    // MARK: - iTerm inventory
+
+    private func startInventoryRefresh() {
+        refreshItermInventory()
+        inventoryTimer = Timer.scheduledTimer(withTimeInterval: inventoryRefreshInterval, repeats: true) { [weak self] _ in
+            self?.refreshItermInventory()
+        }
+    }
+
+    private func refreshItermInventory() {
+        Task.detached { [weak self] in
+            let alive = ITermInventory.fetchAliveUUIDs()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if alive != self.aliveItermUUIDs {
+                    self.aliveItermUUIDs = alive
+                    self.recomputeBarState()
+                }
+            }
+        }
     }
 
     // MARK: - Derived UI state
 
-    private static func computeBarState(from sessions: [DroidSession]) -> MenuBarState {
-        let active = sessions.filter { $0.status == .running || $0.status == .waitingForInput }
-        let waiting = active.filter { $0.status == .waitingForInput }.count
-        if active.isEmpty { return .idle }
-        if waiting > 0 { return .attention(count: active.count, waiting: waiting) }
-        return .tracking(count: active.count)
+    private func computeBarState() -> MenuBarState {
+        let visible = visibleSessions
+        let running = visible.filter { $0.status == .running }.count
+        let waiting = visible.filter { $0.status == .waitingForInput }.count
+        let finished = visible.filter { $0.status == .finished }.count
+        if running + waiting + finished == 0 { return .idle }
+        return .active(running: running, waiting: waiting, finished: finished)
     }
 
     private func recomputeBarState() {
-        let next = Self.computeBarState(from: sessions)
+        let next = computeBarState()
         if next != menuBarState { menuBarState = next }
     }
 

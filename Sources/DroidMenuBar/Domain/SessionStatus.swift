@@ -9,6 +9,10 @@ enum SessionStatus: String, Codable, Equatable {
 
 enum MenuBarState: Equatable {
     case idle
-    case tracking(count: Int)
-    case attention(count: Int, waiting: Int)
+    case active(running: Int, waiting: Int, finished: Int)
+
+    var hasAttention: Bool {
+        if case .active(_, let waiting, _) = self, waiting > 0 { return true }
+        return false
+    }
 }

@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: HookSocketServer!
     private var cancellables: Set<AnyCancellable> = []
     private var eventMonitor: Any?
+    private var flashTimer: Timer?
+    private var flashOn: Bool = true
+    private var currentState: MenuBarState = .idle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -94,7 +97,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let m = eventMonitor { NSEvent.removeMonitor(m); eventMonitor = nil }
     }
 
+    private static let sparklineMax = 10
+
     private func render(_ state: MenuBarState) {
+        currentState = state
+        if state.hasAttention {
+            flashOn = true
+            startFlashing()
+        } else {
+            stopFlashing()
+        }
+        applyTitle(for: state, flashOn: flashOn)
+    }
+
+    private func applyTitle(for state: MenuBarState, flashOn: Bool) {
         guard let button = statusItem?.button else { return }
 
         button.image = nil
@@ -106,22 +122,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 string: "🤖",
                 attributes: [.font: NSFont.systemFont(ofSize: 14)]
             )
-        case .tracking(let count):
-            button.attributedTitle = NSAttributedString(
-                string: "🤖 \(count)",
-                attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .medium)]
-            )
-        case .attention(let count, _):
-            button.attributedTitle = NSAttributedString(
-                string: "❓ \(count)",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
-                    .foregroundColor: NSColor.systemOrange
-                ]
-            )
+
+        case .active(let running, let waiting, let finished):
+            let (r, w, f) = allocateSquares(running: running, waiting: waiting, finished: finished, capacity: Self.sparklineMax)
+            button.attributedTitle = sparklineTitle(running: r, waiting: w, finished: f, flashOn: flashOn)
         }
 
         button.needsDisplay = true
-        NSLog("DroidMenuBar.render: state=\(state) frame=\(button.frame) title='\(button.title)'")
+    }
+
+    private func sparklineTitle(running: Int, waiting: Int, finished: Int, flashOn: Bool) -> NSAttributedString {
+        let waitingGlyph = flashOn ? "🟧" : "⬜"
+        let squares =
+            String(repeating: waitingGlyph, count: waiting) +
+            String(repeating: "🟦", count: running) +
+            String(repeating: "🟩", count: finished)
+        return NSAttributedString(
+            string: squares,
+            attributes: [.font: NSFont.systemFont(ofSize: 11)]
+        )
+    }
+
+    /// Largest-remainder proportional allocation. Ensures waiting >= 1 square
+    /// if any sessions are waiting so the attention signal never gets squeezed out.
+    private func allocateSquares(running: Int, waiting: Int, finished: Int, capacity: Int) -> (Int, Int, Int) {
+        let total = running + waiting + finished
+        guard total > capacity else { return (running, waiting, finished) }
+
+        let scale = Double(capacity) / Double(total)
+        let raw: [Double] = [Double(running) * scale, Double(waiting) * scale, Double(finished) * scale]
+        var floors = raw.map { Int($0) }
+        var leftover = capacity - floors.reduce(0, +)
+        let remainders = raw.enumerated()
+            .map { (idx: $0.offset, frac: $0.element - Double(Int($0.element))) }
+            .sorted { $0.frac > $1.frac }
+        var ri = 0
+        while leftover > 0 && ri < remainders.count {
+            floors[remainders[ri].idx] += 1
+            leftover -= 1
+            ri += 1
+        }
+        var (r, w, f) = (floors[0], floors[1], floors[2])
+        if waiting > 0 && w == 0 {
+            w = 1
+            if f > 0 { f -= 1 } else if r > 0 { r -= 1 }
+        }
+        return (r, w, f)
+    }
+
+    private func startFlashing() {
+        guard flashTimer == nil else { return }
+        flashTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.flashOn.toggle()
+                self.applyTitle(for: self.currentState, flashOn: self.flashOn)
+            }
+        }
+    }
+
+    private func stopFlashing() {
+        flashTimer?.invalidate()
+        flashTimer = nil
+        flashOn = true
     }
 }

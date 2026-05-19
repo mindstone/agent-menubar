@@ -9,7 +9,7 @@ struct SessionListView: View {
                 Text("Droid sessions")
                     .font(.headline)
                 Spacer()
-                if store.sessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
+                if store.visibleSessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
                     Button("Clear finished") { store.clearFinished() }
                         .buttonStyle(.borderless)
                         .font(.callout)
@@ -26,7 +26,7 @@ struct SessionListView: View {
 
             Divider()
 
-            if store.sessions.isEmpty {
+            if store.visibleSessions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("No droids yet.")
                         .font(.callout)
@@ -39,7 +39,7 @@ struct SessionListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(store.sessions) { session in
+                        ForEach(store.visibleSessions) { session in
                             SessionRowView(session: session) {
                                 store.focus(session)
                             }
@@ -55,7 +55,7 @@ struct SessionListView: View {
 
             Divider()
             HStack(spacing: 12) {
-                Text("\(store.sessions.count) tracked")
+                Text("\(store.visibleSessions.count) tracked")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
