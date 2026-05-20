@@ -18,13 +18,22 @@ enum ITermFocuser {
         return raw
     }
 
+    /// Make `s` safe to embed inside an AppleScript double-quoted string.
+    /// In AppleScript, only `\\` and `\"` are meaningful escapes inside `"…"`,
+    /// so we backslash-escape `\` first and then `"`. Order matters; reversing
+    /// would re-escape the backslash we just introduced.
+    static func escapeForAppleScriptStringLiteral(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
     /// Activate iTerm and select the window/tab/session whose unique id matches
     /// the prefix-stripped UUID. Tries the original raw string as a fallback.
     @discardableResult
     static func focus(itermSessionId rawId: String) -> ITermFocusResult {
         let uuid = uuidFromRaw(rawId)
-        let escaped = uuid.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedRaw = rawId.replacingOccurrences(of: "\"", with: "\\\"")
+        let escaped = escapeForAppleScriptStringLiteral(uuid)
+        let escapedRaw = escapeForAppleScriptStringLiteral(rawId)
 
         let script = """
         tell application "iTerm"
