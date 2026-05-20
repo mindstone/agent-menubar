@@ -31,7 +31,7 @@
     <key>NSAppleEventsUsageDescription</key>
     <string>AgentMenuBar uses AppleScript to focus iTerm2 tabs when you click a tracked agent session.</string>
     <key>NSHumanReadableCopyright</key>
-    <string>MIT</string>
+    <string>Copyright © 2026 Mindstone Learning Limited. Licensed under FSL-1.1-MIT.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

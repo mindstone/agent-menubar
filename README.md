@@ -2,13 +2,23 @@
 
 A macOS menu-bar app that tracks running AI-agent sessions across your iTerm windows and tabs, surfaces the ones waiting for your input, and one-click-focuses the exact tab. The first supported agent is Factory Droid; the architecture is generic so other CLI agents can plug in via their own hook bridges.
 
-## Why this exists
+![AgentMenuBar popover showing running, waiting, and finished agent sessions](docs/popover.png)
 
-Factory's CLI plays a sound when it needs your attention but doesn't tell you *which* of your iTerm tabs to look at. This app fixes that by:
+## Why this exists — agent overload
 
-1. Listening to Factory's documented hook events (`Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`).
+We started running half a dozen long-running coding agents in parallel — different repos, different tasks, all in their own iTerm tabs — and immediately hit "agent overload":
+
+- Some are thinking, some are stuck waiting for a permission prompt or a clarifying question, some are done and idle.
+- Every CLI plays the same little sound when it needs you, and none of them tell you *which* tab to look at.
+- Cmd-tabbing through iTerm windows to find the one with the orange dot doesn't scale past three or four agents.
+
+AgentMenuBar is the dashboard we wanted: at a glance, how many agents are *running*, *waiting on you*, or *finished*; one click to jump straight to the exact iTerm tab; and the menu-bar glyph flashes orange the moment anything goes from running to waiting, so you can stop watching for it.
+
+## How it works
+
+1. Listening to the agent CLI's documented hook events (`Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, plus `PreToolUse`/`PostToolUse` for interactive `AskUser` prompts on Factory Droid).
 2. Capturing each session's `ITERM_SESSION_ID` at start.
-3. Showing one row per active droid in a popover, with click-to-focus that selects the exact iTerm window + tab.
+3. Showing one row per active agent in a popover, with click-to-focus that selects the exact iTerm window + tab.
 
 No accessibility automation, no terminal scraping. Hooks + iTerm's own session UUID + AppleScript only.
 
@@ -130,4 +140,4 @@ Sources/AgentMenuBar/
 
 ## License
 
-TBD.
+[Functional Source License, Version 1.1, MIT Future License](LICENSE) (FSL-1.1-MIT) — copyright © 2026 Mindstone Learning Limited. You can use, modify, and redistribute the Software for any purpose other than offering it as a competing commercial hosted service. The license auto-converts to plain MIT on **2030-05-20**.

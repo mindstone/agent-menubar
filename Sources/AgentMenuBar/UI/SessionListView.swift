@@ -6,7 +6,7 @@ struct SessionListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Droid sessions")
+                Text("Agents")
                     .font(.headline)
                 Spacer()
                 if store.visibleSessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
@@ -28,10 +28,10 @@ struct SessionListView: View {
 
             if store.visibleSessions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("No droids yet.")
+                    Text("No agents yet.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Text("Open an iTerm tab and run `droid`. Make sure `make install-hooks` was run.")
+                    Text("Open an iTerm tab and start an agent (e.g. `droid`). Make sure `make install-hooks` was run.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
