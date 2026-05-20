@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 /// Listens on a Unix domain socket at
-/// ~/Library/Application Support/DroidMenuBar/sock for line-delimited JSON
+/// ~/Library/Application Support/AgentMenuBar/sock for line-delimited JSON
 /// emitted by hooks/factory-event-bridge.sh.
 ///
 /// Implementation: BSD socket(AF_UNIX, SOCK_STREAM) + DispatchSourceRead for
@@ -18,15 +18,15 @@ final class HookSocketServer: @unchecked Sendable {
 
     static var socketURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("DroidMenuBar", isDirectory: true)
+            .appendingPathComponent("AgentMenuBar", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base.appendingPathComponent("sock")
     }
 
     private var serverFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
-    private let acceptQueue = DispatchQueue(label: "DroidMenuBar.HookSocket.accept")
-    private let readQueue   = DispatchQueue(label: "DroidMenuBar.HookSocket.read", attributes: .concurrent)
+    private let acceptQueue = DispatchQueue(label: "AgentMenuBar.HookSocket.accept")
+    private let readQueue   = DispatchQueue(label: "AgentMenuBar.HookSocket.read", attributes: .concurrent)
 
     func start(onEvent: @escaping @Sendable (HookEvent) -> Void) throws {
         let url  = Self.socketURL
@@ -94,7 +94,7 @@ final class HookSocketServer: @unchecked Sendable {
             if client < 0 {
                 if errno == EAGAIN || errno == EWOULDBLOCK { return }
                 if errno == EINTR { continue }
-                NSLog("DroidMenuBar.HookSocket: accept errno=\(errno)")
+                NSLog("AgentMenuBar.HookSocket: accept errno=\(errno)")
                 return
             }
             readQueue.async {
@@ -152,7 +152,7 @@ final class HookSocketServer: @unchecked Sendable {
             decoded += 1
         }
         if decoded == 0 {
-            NSLog("DroidMenuBar.HookSocket: failed to decode \(accumulated.count) bytes: \(String(data: accumulated.prefix(200), encoding: .utf8) ?? "<bin>")")
+            NSLog("AgentMenuBar.HookSocket: failed to decode \(accumulated.count) bytes: \(String(data: accumulated.prefix(200), encoding: .utf8) ?? "<bin>")")
         }
     }
 

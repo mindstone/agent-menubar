@@ -3,7 +3,7 @@ import AppKit
 import Combine
 
 @main
-struct DroidMenuBarApp: App {
+struct AgentMenuBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
@@ -34,15 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.store.apply(event)
                 }
             }
-            NSLog("DroidMenuBar: listening at \(HookSocketServer.socketURL.path)")
+            NSLog("AgentMenuBar: listening at \(HookSocketServer.socketURL.path)")
         } catch {
-            NSLog("DroidMenuBar: socket bootstrap failed: \(error)")
+            NSLog("AgentMenuBar: socket bootstrap failed: \(error)")
         }
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.isVisible = true
         item.behavior = []
-        item.autosaveName = "dev.harry.droid-menubar.statusitem"
+        item.autosaveName = "com.mindstone.agentmenubar.statusitem"
         if let button = item.button {
             button.target = self
             button.action = #selector(togglePopover(_:))
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         render(store.menuBarState)
 
-        NSLog("DroidMenuBar: status item registered (visible=\(item.isVisible))")
+        NSLog("AgentMenuBar: status item registered (visible=\(item.isVisible))")
     }
 
     @objc private func togglePopover(_ sender: Any?) {

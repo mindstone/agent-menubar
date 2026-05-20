@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "DroidMenuBar",
+    name: "AgentMenuBar",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "DroidMenuBar", targets: ["DroidMenuBar"])
+        .executable(name: "AgentMenuBar", targets: ["AgentMenuBar"])
     ],
     targets: [
         .executableTarget(
-            name: "DroidMenuBar",
-            path: "Sources/DroidMenuBar",
+            name: "AgentMenuBar",
+            path: "Sources/AgentMenuBar",
             resources: [
                 .process("Resources")
             ]

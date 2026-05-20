@@ -30,9 +30,9 @@ After editing Swift code: `make install`. After editing the hook bridge or its r
 
 ## Where state and logs live
 
-- `~/Library/Application Support/DroidMenuBar/sessions.json` — persisted session store (atomic rename)
-- `~/Library/Application Support/DroidMenuBar/sock` — Unix domain socket the bridge writes to
-- `~/Library/Logs/DroidMenuBar/events.log` — every augmented hook payload, appended even when the app is offline. First place to look when behaviour is wrong.
+- `~/Library/Application Support/AgentMenuBar/sessions.json` — persisted session store (atomic rename)
+- `~/Library/Application Support/AgentMenuBar/sock` — Unix domain socket the bridge writes to
+- `~/Library/Logs/AgentMenuBar/events.log` — every augmented hook payload, appended even when the app is offline. First place to look when behaviour is wrong.
 - `~/.factory/settings.json` — where `install-hooks` registers the bridge
 
 ## Status state machine (more nuanced than the README table)
@@ -79,13 +79,13 @@ If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook
 
 ## Diagnostics quick recipes
 
-- "Did my click reach SwiftUI?" → Add a temporary `NSLog` / file write in `SessionRowView.onTapGesture` and watch `~/Library/Logs/DroidMenuBar/`. Don't trust `log show` for app-level `NSLog`s under newer macOS — they're often redacted as `<private>`.
+- "Did my click reach SwiftUI?" → Add a temporary `NSLog` / file write in `SessionRowView.onTapGesture` and watch `~/Library/Logs/AgentMenuBar/`. Don't trust `log show` for app-level `NSLog`s under newer macOS — they're often redacted as `<private>`.
 - "Why doesn't the popover show this session?" → It's almost certainly the iTerm inventory filter. Run the script in `ITermInventory.fetchAliveUUIDs()`'s body manually via `osascript` and compare against `aliveItermUUIDs`.
 - "Hook didn't fire" → Tail `events.log` while triggering. If nothing appears the bridge wasn't called → check `~/.factory/settings.json` for the registration. If it appears but the app didn't react, the socket forwarding failed → check the app is running and `sock` exists.
 
 ## Coding conventions
 
 - Swift, no third-party dependencies. Don't add SwiftPM packages without a strong reason.
-- All UI lives under `Sources/DroidMenuBar/UI`. Status decisions live in `Store/SessionStore.swift`. Don't move status logic into views.
-- AppleScript is consolidated under `Sources/DroidMenuBar/Focus/`. Keep it there.
+- All UI lives under `Sources/AgentMenuBar/UI`. Status decisions live in `Store/SessionStore.swift`. Don't move status logic into views.
+- AppleScript is consolidated under `Sources/AgentMenuBar/Focus/`. Keep it there.
 - Comments only when the why is non-obvious (constraints, macOS quirks, hook semantics). Don't narrate the code.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # send-test-event.sh
 #
-# Send a fake Factory hook event to the running DroidMenuBar app's socket.
+# Send a fake Factory hook event to the running AgentMenuBar app's socket.
 # Useful for development without firing up a real droid session.
 #
 # Usage:
@@ -12,10 +12,10 @@
 
 set -u
 
-SOCK="${HOME}/Library/Application Support/DroidMenuBar/sock"
+SOCK="${HOME}/Library/Application Support/AgentMenuBar/sock"
 if [ ! -S "${SOCK}" ]; then
     echo "ERROR: socket not found at ${SOCK}"
-    echo "Is DroidMenuBar running? Try: make run"
+    echo "Is AgentMenuBar running? Try: make run"
     exit 1
 fi
 

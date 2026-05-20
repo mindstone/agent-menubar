@@ -18,13 +18,13 @@ enum ITermInventory {
         """
         var err: NSDictionary?
         guard let apple = NSAppleScript(source: script) else {
-            NSLog("DroidMenuBar.ITermInventory: NSAppleScript init failed")
+            NSLog("AgentMenuBar.ITermInventory: NSAppleScript init failed")
             return []
         }
         let result = apple.executeAndReturnError(&err)
         if let err {
             let msg = (err[NSAppleScript.errorMessage] as? String) ?? String(describing: err)
-            NSLog("DroidMenuBar.ITermInventory: AppleScript error: %@", msg)
+            NSLog("AgentMenuBar.ITermInventory: AppleScript error: %@", msg)
             return []
         }
         let raw = result.stringValue ?? ""
@@ -33,7 +33,7 @@ enum ITermInventory {
                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                .filter { !$0.isEmpty }
         )
-        NSLog("DroidMenuBar.ITermInventory: fetched %d alive uuids", set.count)
+        NSLog("AgentMenuBar.ITermInventory: fetched %d alive uuids", set.count)
         return set
     }
 }

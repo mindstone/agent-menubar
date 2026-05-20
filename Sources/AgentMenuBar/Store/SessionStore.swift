@@ -52,7 +52,7 @@ final class SessionStore: ObservableObject {
     private let staleAfterIdle: TimeInterval = 60 * 60     // mark loaded running session stale if > 1h silent
     private let bannerTTL: TimeInterval = 4
     private let inventoryRefreshInterval: TimeInterval = 5
-    private let saveDebounce = DispatchQueue(label: "DroidMenuBar.SessionStore.save")
+    private let saveDebounce = DispatchQueue(label: "AgentMenuBar.SessionStore.save")
     private var bannerClearTask: Task<Void, Never>?
     private var inventoryTimer: Timer?
 

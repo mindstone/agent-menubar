@@ -2,19 +2,19 @@
   "_comment": "Merge the 'hooks' object into ~/.factory/settings.json. The 'make install-hooks' target does this idempotently.",
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "$DROID_MENUBAR_HOOK", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "$DROID_MENUBAR_HOOK", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ],
     "Notification": [
-      { "hooks": [ { "type": "command", "command": "$DROID_MENUBAR_HOOK", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "$DROID_MENUBAR_HOOK", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "$DROID_MENUBAR_HOOK", "timeout": 5 } ] }
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ]
   }
 }

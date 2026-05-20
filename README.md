@@ -1,6 +1,6 @@
-# DroidMenuBar
+# AgentMenuBar
 
-A macOS menu-bar app that tracks running Factory Droid sessions across your iTerm windows and tabs, surfaces the ones waiting for your input, and one-click-focuses the exact tab.
+A macOS menu-bar app that tracks running AI-agent sessions across your iTerm windows and tabs, surfaces the ones waiting for your input, and one-click-focuses the exact tab. The first supported agent is Factory Droid; the architecture is generic so other CLI agents can plug in via their own hook bridges.
 
 ## Why this exists
 
@@ -24,10 +24,10 @@ No accessibility automation, no terminal scraping. Hooks + iTerm's own session U
                                          │ augments with $ITERM_SESSION_ID,
                                          │ $TERM_PROGRAM, $PPID
                                          ▼
-            Unix domain socket: ~/Library/Application Support/DroidMenuBar/sock
+            Unix domain socket: ~/Library/Application Support/AgentMenuBar/sock
                                          │
                                          ▼
-                                 DroidMenuBar.app (Swift / SwiftUI)
+                                 AgentMenuBar.app (Swift / SwiftUI)
                                          │
                                   AppleScript│
                                          ▼
@@ -36,8 +36,8 @@ No accessibility automation, no terminal scraping. Hooks + iTerm's own session U
 
 - **Canonical session id**: Factory `session_id` (UUID).
 - **Focus key**: `ITERM_SESSION_ID` captured once at `SessionStart`.
-- **Storage**: `~/Library/Application Support/DroidMenuBar/sessions.json` (atomic rename).
-- **Debug log**: `~/Library/Logs/DroidMenuBar/events.log` (raw augmented payloads even when the app is offline).
+- **Storage**: `~/Library/Application Support/AgentMenuBar/sessions.json` (atomic rename).
+- **Debug log**: `~/Library/Logs/AgentMenuBar/events.log` (raw augmented payloads even when the app is offline).
 
 ## Quick start
 
@@ -95,8 +95,8 @@ hooks/
   settings-hooks-block.json           reference snippet of what install-hooks adds
 scripts/
   send-test-event.sh                  fake-event harness for development
-Sources/DroidMenuBar/
-  App/DroidMenuBarApp.swift           @main, MenuBarExtra, accessory policy, server boot
+Sources/AgentMenuBar/
+  App/AgentMenuBarApp.swift           @main, MenuBarExtra, accessory policy, server boot
   Domain/                             DroidSession, HookEvent, SessionStatus,
                                       RepoInfo, TranscriptReader
   Store/                              SessionStore (state machine) + JSON persistence
@@ -114,11 +114,11 @@ Sources/DroidMenuBar/
 | `make release` | swift build -c release |
 | `make run` | build + launch (debug) |
 | `make run-release` | build + launch (release) |
-| `make stop` | kill any running DroidMenuBar |
+| `make stop` | kill any running AgentMenuBar |
 | `make install-hooks` | additive jq merge into `~/.factory/settings.json`, backup first |
 | `make uninstall-hooks` | inverse, prunes empty groups, backup first |
 | `make test-event` | send the demo event sequence to the running app |
-| `make tail-events` | tail `~/Library/Logs/DroidMenuBar/events.log` |
+| `make tail-events` | tail `~/Library/Logs/AgentMenuBar/events.log` |
 | `make clean` | swift package clean |
 
 ## Roadmap (post-v1)

@@ -59,17 +59,17 @@ enum ITermFocuser {
 
         var errorDict: NSDictionary?
         guard let apple = NSAppleScript(source: script) else {
-            NSLog("DroidMenuBar.ITermFocuser: NSAppleScript init failed")
+            NSLog("AgentMenuBar.ITermFocuser: NSAppleScript init failed")
             return .appleScriptFailed("NSAppleScript init failed")
         }
         let result = apple.executeAndReturnError(&errorDict)
         if let err = errorDict {
             let msg = (err[NSAppleScript.errorMessage] as? String) ?? String(describing: err)
-            NSLog("DroidMenuBar.ITermFocuser: AppleScript error: \(msg)  raw=\(rawId)  uuid=\(uuid)")
+            NSLog("AgentMenuBar.ITermFocuser: AppleScript error: \(msg)  raw=\(rawId)  uuid=\(uuid)")
             return .appleScriptFailed(msg)
         }
         let value = (result.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        NSLog("DroidMenuBar.ITermFocuser: result=\(value)  raw=\(rawId)  uuid=\(uuid)")
+        NSLog("AgentMenuBar.ITermFocuser: result=\(value)  raw=\(rawId)  uuid=\(uuid)")
         if value == "ok" { return .ok }
         return .notFound(uuidTried: uuid)
     }

@@ -3,7 +3,7 @@
 #
 # Single hook script registered for every Factory hook event we care about.
 # Reads Factory's JSON payload from stdin, augments it with iTerm + terminal
-# environment variables, and forwards it to DroidMenuBar.app via a Unix
+# environment variables, and forwards it to AgentMenuBar.app via a Unix
 # domain socket. Also appends to a debug log so events survive when the app
 # is not running.
 #
@@ -11,8 +11,8 @@
 
 set -u
 
-LOG_DIR="${HOME}/Library/Logs/DroidMenuBar"
-SOCK="${HOME}/Library/Application Support/DroidMenuBar/sock"
+LOG_DIR="${HOME}/Library/Logs/AgentMenuBar"
+SOCK="${HOME}/Library/Application Support/AgentMenuBar/sock"
 LOG_FILE="${LOG_DIR}/events.log"
 
 mkdir -p "${LOG_DIR}" 2>/dev/null || true
