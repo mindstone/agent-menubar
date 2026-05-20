@@ -1,20 +1,96 @@
-# Swift / SPM
+# ----- Swift / Swift Package Manager -----
 .build/
 .swiftpm/
 Package.resolved
-*.xcodeproj
+*.xcodeproj/
+*.xcworkspace/
 DerivedData/
+*.swiftmodule
+*.swiftdoc
+*.o
+*.a
+*.dylib
 
-# Generated .app bundle
+# ----- Xcode user state -----
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM/
+
+# ----- Code coverage / profiling -----
+*.profraw
+*.profdata
+*.xcresult/
+
+# ----- Build / packaging output -----
+# This project's `make bundle` output and any signed artefacts.
 build/
+DerivedSources/
+*.app
+*.app.zip
+*.pkg
+!docs/**/*.png
 
-# macOS
+# ----- Dependency managers (rarely-used here, kept for safety) -----
+# CocoaPods
+Pods/
+# Carthage
+Carthage/Build/
+Carthage/Checkouts/
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# ----- App / project local state -----
+# Persisted store the app writes when run in-place.
+sessions.json
+# Hook bridge / app event logs.
+*.log
+# Local backups created by `make install-hooks`.
+*.bak
+*.bak.*
+
+# ----- macOS finder / metadata cruft -----
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
 
-# Editor
+# ----- Editors -----
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+Session.vim
+.netrwhist
 
-# Local state
-sessions.json
-*.log
+# ----- Other OS noise -----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ----- Secrets / local env -----
+.env
+.env.*
+!.env.example
