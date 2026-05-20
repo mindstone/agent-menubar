@@ -8,6 +8,7 @@ struct HookEvent: Codable {
     let transcriptPath: String?
     let message: String?            // Notification.message
     let prompt: String?             // UserPromptSubmit.prompt
+    let toolName: String?           // PreToolUse / PostToolUse
     let itermSessionId: String?     // injected by bridge from $ITERM_SESSION_ID
     let termProgram: String?        // injected by bridge
 
@@ -18,6 +19,7 @@ struct HookEvent: Codable {
         case transcriptPath = "transcript_path"
         case message        = "message"
         case prompt         = "prompt"
+        case toolName       = "tool_name"
         case itermSessionId = "iterm_session_id"
         case termProgram    = "term_program"
     }

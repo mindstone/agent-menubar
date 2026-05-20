@@ -160,6 +160,10 @@ final class SessionStore: ObservableObject {
             s.lastEvent = event.prompt?.firstMeaningfulLine() ?? "Working…"
 
         case "Stop":
+            // Stop fires after every model turn. From the user's POV, between
+            // turns the droid is idle and effectively "done" with its current
+            // task — show it as finished. The next UserPromptSubmit will flip
+            // it back to running.
             s.status = .finished
             s.attentionRaisedAt = nil
             if let t = s.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
@@ -172,12 +176,30 @@ final class SessionStore: ObservableObject {
             s.status = .finished
             s.finishedAt = now
             s.attentionRaisedAt = nil
-            // Don't overwrite a useful lastEvent from Stop with "Session ended".
             if s.lastEvent.isEmpty || s.lastEvent == "Starting…" {
                 s.lastEvent = "Session ended"
             }
 
-        case "PreToolUse", "PostToolUse", "SubagentStop", "PreCompact":
+        case "PreToolUse":
+            // The AskUser tool blocks the model while it waits for the user to
+            // pick from an interactive choice list — this is the in-conversation
+            // equivalent of a permission Notification. Mirror that as waiting
+            // for input so the menu bar flashes ❓.
+            if event.toolName == "AskUser" {
+                s.status = .waitingForInput
+                s.attentionRaisedAt = now
+                s.lastEvent = "Droid is asking you a question"
+            }
+
+        case "PostToolUse":
+            // AskUser just got resolved by the user picking an answer — flip
+            // back to running until Stop fires for the final reply.
+            if event.toolName == "AskUser" && s.status == .waitingForInput {
+                s.status = .running
+                s.attentionRaisedAt = nil
+            }
+
+        case "SubagentStop", "PreCompact":
             // Bump activity but don't change visible state.
             break
 

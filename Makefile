@@ -91,11 +91,21 @@ install-hooks:
 	        | map(select((.hooks // []) | length > 0))) \
 	      + [{hooks: [{type: "command", command: $$cmd, timeout: 5}]}] \
 	    ); \
+	  def install_matcher_hook($$e; $$m): \
+	    .hooks = (.hooks // {}) | \
+	    .hooks[$$e] = ( \
+	      ((.hooks[$$e] // []) \
+	        | map(.hooks |= map(select(.command != $$cmd))) \
+	        | map(select((.hooks // []) | length > 0))) \
+	      + [{matcher: $$m, hooks: [{type: "command", command: $$cmd, timeout: 5}]}] \
+	    ); \
 	  install_hook("SessionStart") \
 	  | install_hook("SessionEnd") \
 	  | install_hook("Notification") \
 	  | install_hook("Stop") \
 	  | install_hook("UserPromptSubmit") \
+	  | install_matcher_hook("PreToolUse"; "AskUser") \
+	  | install_matcher_hook("PostToolUse"; "AskUser") \
 	' "$(SETTINGS)" > "$(SETTINGS).new"
 	@mv "$(SETTINGS).new" "$(SETTINGS)"
 	@echo "Hooks installed. Backup: $(SETTINGS).bak.<ts>"
@@ -121,6 +131,8 @@ uninstall-hooks:
 	  | remove_hook("Notification") \
 	  | remove_hook("Stop") \
 	  | remove_hook("UserPromptSubmit") \
+	  | remove_hook("PreToolUse") \
+	  | remove_hook("PostToolUse") \
 	  | if (.hooks // {}) == {} then del(.hooks) else . end \
 	' "$(SETTINGS)" > "$(SETTINGS).new"
 	@mv "$(SETTINGS).new" "$(SETTINGS)"
