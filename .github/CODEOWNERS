@@ -1,0 +1,28 @@
+# CODEOWNERS — see https://docs.github.com/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# These paths carry meaningful execution authority (run shell, send AppleScript,
+# mutate user settings, run CI with secrets, or define what gets installed on
+# users' machines). Changes here require explicit owner review.
+#
+# Default fallback owner for everything else:
+*                                                @harryblam
+
+# Hook bridge: shell that Factory invokes; mutates user's ~/.factory/settings.json
+/hooks/                                          @harryblam
+/Makefile                                        @harryblam
+
+# AppleScript-issuing code: any change here could exfiltrate or execute on iTerm
+/Sources/AgentMenuBar/Focus/                     @harryblam
+
+# IPC: the socket server is the trusted boundary between the bridge and the app
+/Sources/AgentMenuBar/IPC/                       @harryblam
+
+# Dependency surface: third-party Swift packages must never sneak in
+/Package.swift                                   @harryblam
+/Package.resolved                                @harryblam
+
+# CI / workflows: run with repo secrets, must stay tightly scoped
+/.github/                                        @harryblam
+
+# Bundle identity & permissions
+/Resources/Info.plist                            @harryblam
