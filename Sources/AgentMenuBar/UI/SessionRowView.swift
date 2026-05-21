@@ -16,6 +16,7 @@ struct SessionRowView: View {
                     Text(session.repoName ?? session.cwd.lastPathComponent)
                         .font(.system(size: 13, weight: waiting ? .bold : .semibold))
                     statusPill
+                    hostAppPill
                 }
                 Text(session.lastEvent)
                     .font(.system(size: 12))
@@ -92,6 +93,19 @@ struct SessionRowView: View {
             .padding(.vertical, 1)
             .background(color)
             .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var hostAppPill: some View {
+        if session.hostApp != .unknown {
+            Text(session.hostApp.displayName)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+        }
     }
 
     private var accentColor: Color {

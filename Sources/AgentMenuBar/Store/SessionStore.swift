@@ -12,25 +12,42 @@ final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [DroidSession] = []
     @Published private(set) var menuBarState: MenuBarState = .idle
     @Published private(set) var aliveItermUUIDs: Set<String> = []
+    @Published private(set) var aliveGhosttyIDs: Set<String> = []
     @Published var banner: TransientBanner?
 
-    /// Sessions to show in the UI: one entry per currently-open iTerm tab,
-    /// representing the most recent droid run in that tab. Sessions without an
-    /// iTerm tab id (e.g. droid invoked outside iTerm) are always passed through.
+    /// Sessions to show in the UI: one entry per currently-open terminal tab,
+    /// representing the most recent droid run in that tab. Sessions without a
+    /// terminal binding (e.g. droid invoked outside a recognised terminal) are
+    /// always passed through.
     var visibleSessions: [DroidSession] {
         var latestPerTab: [String: DroidSession] = [:]
         var orphans: [DroidSession] = []
         for s in sessions {
-            guard let raw = s.itermSessionId, !raw.isEmpty else {
+            if let id = s.ghosttyTerminalId, !id.isEmpty {
+                guard aliveGhosttyIDs.contains(id) else { continue }
+                let key = "ghostty:\(id)"
+                if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
+                    continue
+                }
+                latestPerTab[key] = s
+            } else if (s.ghosttySurfaceId ?? "").isEmpty == false {
+                // First-sight Ghostty session whose AppleScript UUID hasn't
+                // been resolved yet. Show it optimistically so the user
+                // doesn't see a flicker on session start; the resolve task
+                // kicked off in `apply` will populate ghosttyTerminalId
+                // shortly and stable filtering takes over from there.
                 orphans.append(s)
-                continue
+            } else if let raw = s.itermSessionId, !raw.isEmpty {
+                let uuid = ITermFocuser.uuidFromRaw(raw)
+                guard aliveItermUUIDs.contains(uuid) else { continue }
+                let key = "iterm:\(uuid)"
+                if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
+                    continue
+                }
+                latestPerTab[key] = s
+            } else {
+                orphans.append(s)
             }
-            let uuid = ITermFocuser.uuidFromRaw(raw)
-            guard aliveItermUUIDs.contains(uuid) else { continue }
-            if let existing = latestPerTab[uuid], existing.lastEventAt >= s.lastEventAt {
-                continue
-            }
-            latestPerTab[uuid] = s
         }
         let merged = Array(latestPerTab.values) + orphans
         return merged.sorted { a, b in
@@ -68,23 +85,51 @@ final class SessionStore: ObservableObject {
         inventoryTimer?.invalidate()
     }
 
-    // MARK: - iTerm inventory
+    // MARK: - Terminal inventory
 
     private func startInventoryRefresh() {
-        refreshItermInventory()
+        refreshTerminalInventory()
         inventoryTimer = Timer.scheduledTimer(withTimeInterval: inventoryRefreshInterval, repeats: true) { [weak self] _ in
-            self?.refreshItermInventory()
+            self?.refreshTerminalInventory()
         }
     }
 
-    private func refreshItermInventory() {
+    private func refreshTerminalInventory() {
         Task.detached { [weak self] in
-            let alive = ITermInventory.fetchAliveUUIDs()
+            async let iterm = ITermInventory.fetchAliveUUIDs()
+            async let ghostty = GhosttyInventory.fetchAliveIDs()
+            let (aliveIterm, aliveGhostty) = await (iterm, ghostty)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                if alive != self.aliveItermUUIDs {
-                    self.aliveItermUUIDs = alive
+                var changed = false
+                if aliveIterm != self.aliveItermUUIDs {
+                    self.aliveItermUUIDs = aliveIterm
+                    changed = true
+                }
+                if aliveGhostty != self.aliveGhosttyIDs {
+                    self.aliveGhosttyIDs = aliveGhostty
+                    changed = true
+                }
+                if changed { self.recomputeBarState() }
+            }
+        }
+    }
+
+    /// Bind a session's `ghosttyTerminalId` (the AppleScript-side UUID) by
+    /// asking Ghostty for the terminal whose `working directory` matches the
+    /// session's cwd. Run off the main actor; results may arrive before or
+    /// after subsequent hooks for the same session.
+    private func scheduleGhosttyResolve(for sessionId: String, cwd: String) {
+        Task.detached { [weak self] in
+            let resolved = GhosttyInventory.resolveTerminalId(forCwd: cwd)
+            guard let resolved else { return }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard let idx = self.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+                if (self.sessions[idx].ghosttyTerminalId ?? "").isEmpty {
+                    self.sessions[idx].ghosttyTerminalId = resolved
                     self.recomputeBarState()
+                    self.save()
                 }
             }
         }
@@ -116,12 +161,14 @@ final class SessionStore: ObservableObject {
         let transcriptURL = event.transcriptPath.map { URL(fileURLWithPath: $0) }
 
         var idx = sessions.firstIndex { $0.id == event.sessionId }
+        var resolveGhostty = false
         if idx == nil {
             let new = DroidSession(
                 id: event.sessionId,
                 cwd: cwdURL,
                 repoName: RepoInfo.repoName(forCwd: cwdURL),
                 itermSessionId: event.itermSessionId?.nilIfEmpty,
+                ghosttySurfaceId: event.ghosttySurfaceId?.nilIfEmpty,
                 status: .running,
                 lastEvent: "Starting…",
                 lastEventAt: now,
@@ -130,6 +177,9 @@ final class SessionStore: ObservableObject {
                 transcriptPath: transcriptURL,
                 attentionRaisedAt: nil
             )
+            if (new.ghosttySurfaceId ?? "").isEmpty == false {
+                resolveGhostty = true
+            }
             sessions.insert(new, at: 0)
             idx = 0
         }
@@ -138,6 +188,16 @@ final class SessionStore: ObservableObject {
         // Late-binding: keep first non-empty values.
         if (s.itermSessionId ?? "").isEmpty, let bound = event.itermSessionId?.nilIfEmpty {
             s.itermSessionId = bound
+        }
+        if (s.ghosttySurfaceId ?? "").isEmpty, let bound = event.ghosttySurfaceId?.nilIfEmpty {
+            s.ghosttySurfaceId = bound
+            resolveGhostty = true
+        }
+        // Also resolve any session whose surfaceId is set but whose terminalId
+        // isn't (e.g. loaded from disk after a previous run, or one where the
+        // first resolve attempt failed because Ghostty wasn't running yet).
+        if (s.ghosttySurfaceId ?? "").isEmpty == false && (s.ghosttyTerminalId ?? "").isEmpty {
+            resolveGhostty = true
         }
         if s.transcriptPath == nil { s.transcriptPath = transcriptURL }
         s.lastEventAt = now
@@ -212,14 +272,29 @@ final class SessionStore: ObservableObject {
         sortSessions()
         recomputeBarState()
         save()
+
+        if resolveGhostty {
+            scheduleGhosttyResolve(for: s.id, cwd: cwdURL.path)
+        }
     }
 
     // MARK: - Actions
 
     @MainActor
     func focus(_ session: DroidSession) {
+        if let id = session.ghosttyTerminalId, !id.isEmpty {
+            focusGhostty(sessionId: session.id, terminalId: id, cwdFallback: session.cwd.path)
+            return
+        }
+        if (session.ghosttySurfaceId ?? "").isEmpty == false {
+            // Resolve hasn't completed yet — try a one-shot cwd-based focus
+            // and resolve in the same trip.
+            focusGhostty(sessionId: session.id, terminalId: nil, cwdFallback: session.cwd.path)
+            return
+        }
+
         guard let raw = session.itermSessionId, !raw.isEmpty else {
-            showBanner(.warning, "No iTerm tab bound — this droid wasn't started inside iTerm.")
+            showBanner(.warning, "No terminal tab bound — this droid wasn't started inside a supported terminal.")
             return
         }
         Task.detached {
@@ -232,6 +307,34 @@ final class SessionStore: ObservableObject {
                     self.showBanner(.warning, "iTerm tab not found — it was probably closed.")
                 case .appleScriptFailed:
                     self.showBanner(.warning, "Couldn't talk to iTerm. Allow automation in System Settings → Privacy & Security → Automation.")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func focusGhostty(sessionId: String, terminalId: String?, cwdFallback: String) {
+        Task.detached {
+            // Try the resolved AppleScript UUID first when we have one.
+            if let terminalId {
+                let result = GhosttyFocuser.focus(ghosttyTerminalId: terminalId)
+                if case .ok = result { return }
+                // Fall through to cwd-based focus on miss.
+            }
+            let result = GhosttyFocuser.focusByCwd(cwdFallback)
+            await MainActor.run {
+                switch result {
+                case .ok(let resolvedId):
+                    if let resolvedId, let idx = self.sessions.firstIndex(where: { $0.id == sessionId }) {
+                        if (self.sessions[idx].ghosttyTerminalId ?? "").isEmpty {
+                            self.sessions[idx].ghosttyTerminalId = resolvedId
+                            self.save()
+                        }
+                    }
+                case .notFound:
+                    self.showBanner(.warning, "Ghostty terminal not found — it was probably closed.")
+                case .appleScriptFailed:
+                    self.showBanner(.warning, "Couldn't talk to Ghostty. Allow automation in System Settings → Privacy & Security → Automation.")
                 }
             }
         }

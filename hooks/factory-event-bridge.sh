@@ -2,10 +2,10 @@
 # factory-event-bridge.sh
 #
 # Single hook script registered for every Factory hook event we care about.
-# Reads Factory's JSON payload from stdin, augments it with iTerm + terminal
-# environment variables, and forwards it to AgentMenuBar.app via a Unix
-# domain socket. Also appends to a debug log so events survive when the app
-# is not running.
+# Reads Factory's JSON payload from stdin, augments it with terminal session
+# identifiers (iTerm + Ghostty) and other env signals, and forwards it to
+# AgentMenuBar.app via a Unix domain socket. Also appends to a debug log so
+# events survive when the app is not running.
 #
 # Must NEVER block droid: any failure exits 0 with no output.
 
@@ -23,15 +23,17 @@ payload="$(cat)"
 # Augment with iTerm + env signals. Use jq if present, otherwise minimal awk-style merge.
 if command -v jq >/dev/null 2>&1; then
     augmented="$(printf '%s' "${payload}" | jq -c \
-        --arg iterm "${ITERM_SESSION_ID:-}" \
-        --arg term  "${TERM_PROGRAM:-}" \
-        --arg ppid  "${PPID:-0}" \
-        --arg ts    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg iterm   "${ITERM_SESSION_ID:-}" \
+        --arg ghostty "${GHOSTTY_SURFACE_ID:-}" \
+        --arg term    "${TERM_PROGRAM:-}" \
+        --arg ppid    "${PPID:-0}" \
+        --arg ts      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '. + {
-            iterm_session_id: $iterm,
-            term_program:     $term,
-            ppid:             ($ppid | tonumber? // 0),
-            received_at:      $ts
+            iterm_session_id:   $iterm,
+            ghostty_surface_id: $ghostty,
+            term_program:       $term,
+            ppid:               ($ppid | tonumber? // 0),
+            received_at:        $ts
         }' 2>/dev/null)"
 else
     # Best-effort fallback: prepend signals as a sibling JSON object on a separate line.

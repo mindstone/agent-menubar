@@ -1,26 +1,28 @@
 import Foundation
 
-/// Decoded Factory hook payload, augmented by the bridge script with iTerm env vars.
+/// Decoded Factory hook payload, augmented by the bridge script with terminal env vars.
 struct HookEvent: Codable {
     let hookEventName: String
     let sessionId: String
     let cwd: String?
     let transcriptPath: String?
-    let message: String?            // Notification.message
-    let prompt: String?             // UserPromptSubmit.prompt
-    let toolName: String?           // PreToolUse / PostToolUse
-    let itermSessionId: String?     // injected by bridge from $ITERM_SESSION_ID
-    let termProgram: String?        // injected by bridge
+    let message: String?              // Notification.message
+    let prompt: String?               // UserPromptSubmit.prompt
+    let toolName: String?             // PreToolUse / PostToolUse
+    let itermSessionId: String?       // injected by bridge from $ITERM_SESSION_ID
+    let ghosttySurfaceId: String?     // injected by bridge from $GHOSTTY_SURFACE_ID
+    let termProgram: String?          // injected by bridge
 
     enum CodingKeys: String, CodingKey {
-        case hookEventName  = "hook_event_name"
-        case sessionId      = "session_id"
-        case cwd            = "cwd"
-        case transcriptPath = "transcript_path"
-        case message        = "message"
-        case prompt         = "prompt"
-        case toolName       = "tool_name"
-        case itermSessionId = "iterm_session_id"
-        case termProgram    = "term_program"
+        case hookEventName    = "hook_event_name"
+        case sessionId        = "session_id"
+        case cwd              = "cwd"
+        case transcriptPath   = "transcript_path"
+        case message          = "message"
+        case prompt           = "prompt"
+        case toolName         = "tool_name"
+        case itermSessionId   = "iterm_session_id"
+        case ghosttySurfaceId = "ghostty_surface_id"
+        case termProgram      = "term_program"
     }
 }
