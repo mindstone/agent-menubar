@@ -22,6 +22,18 @@ struct DroidSession: Codable, Identifiable, Equatable {
     var transcriptPath: URL?
     var attentionRaisedAt: Date?
 
+    /// The user's first prompt for this session, captured once on the first
+    /// `UserPromptSubmit` and never overwritten. Surfaced in the popover as
+    /// the "task" subtitle so a row at a glance says what the droid was
+    /// asked to do, separate from whatever it's currently chatting about.
+    var firstPrompt: String?
+
+    /// The host terminal's tab/session title at last inventory poll. Picked
+    /// up from iTerm's `name of session` or Ghostty's `title of terminal`,
+    /// refreshed on the same 5s cycle as the alive-id sweep. Optional because
+    /// older sessions on disk won't have it until the next poll lands.
+    var tabTitle: String?
+
     /// Which macOS app this session was launched from, derived from whichever
     /// id was captured by the bridge. Used by the UI to show a per-row label
     /// and by `focus(_:)` to dispatch to the right adapter.

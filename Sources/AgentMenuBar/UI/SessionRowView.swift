@@ -8,6 +8,9 @@ struct SessionRowView: View {
 
     var body: some View {
         let waiting = session.status == .waitingForInput
+        let firstPrompt = session.firstPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tabTitle = session.tabTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+
         HStack(alignment: .top, spacing: 10) {
             statusIndicator
                 .padding(.top, waiting ? 0 : 4)
@@ -15,16 +18,35 @@ struct SessionRowView: View {
                 HStack(spacing: 6) {
                     Text(session.repoName ?? session.cwd.lastPathComponent)
                         .font(.system(size: 13, weight: waiting ? .bold : .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     statusPill
                     hostAppPill
                 }
+                .help(titleTooltip)
+
+                if let firstPrompt, !firstPrompt.isEmpty {
+                    Text("› \(firstPrompt)")
+                        .font(.system(size: 12).italic())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(firstPrompt)
+                }
+
                 Text(session.lastEvent)
                     .font(.system(size: 12))
                     .foregroundStyle(waiting ? .primary : .secondary)
                     .lineLimit(2)
-                Text(relativeTime(from: session.lastEventAt))
+                    .truncationMode(.tail)
+                    .help(session.lastEvent)
+
+                Text(metaLine(tabTitle: tabTitle))
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(metaTooltip(tabTitle: tabTitle))
             }
             Spacer(minLength: 0)
         }
@@ -46,6 +68,34 @@ struct SessionRowView: View {
                 }
             }
         }
+    }
+
+    private var titleTooltip: String {
+        let id = String(session.id.prefix(8))
+        return "\(session.repoName ?? session.cwd.lastPathComponent) · \(session.cwd.path) · \(id)"
+    }
+
+    private func metaLine(tabTitle: String?) -> String {
+        let rel = relativeTime(from: session.lastEventAt)
+        if let tabTitle, !tabTitle.isEmpty {
+            return "\(tabTitle) · \(rel)"
+        }
+        return rel
+    }
+
+    private func metaTooltip(tabTitle: String?) -> String {
+        let absolute = absoluteTime(session.lastEventAt)
+        if let tabTitle, !tabTitle.isEmpty {
+            return "\(tabTitle)\n\(absolute)"
+        }
+        return absolute
+    }
+
+    private func absoluteTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f.string(from: date)
     }
 
     @ViewBuilder

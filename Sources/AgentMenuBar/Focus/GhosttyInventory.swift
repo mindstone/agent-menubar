@@ -2,45 +2,51 @@ import Foundation
 import AppKit
 
 enum GhosttyInventory {
-    /// AppleScript-side UUIDs of every currently-open Ghostty terminal surface.
-    static func fetchAliveIDs() -> Set<String> {
+    /// Map of every alive Ghostty terminal surface's AppleScript `id` (UUID)
+    /// to its current `title`. The `title` of a terminal is empty when the
+    /// shell hasn't set one yet; we still emit the row with an empty value
+    /// so the UI can fall back to a blank subtitle without flicker.
+    static func fetchAliveTabs() -> [String: String] {
         // Issuing `tell application "Ghostty"` against a non-running Ghostty
         // would auto-launch it, which we never want from a 5s-timer poll.
-        guard isGhosttyRunning() else { return [] }
+        guard isGhosttyRunning() else { return [:] }
 
+        // `acc` (not `lines`) and `SEP` bound outside the tell block — see
+        // `ITermInventory` for why these names matter.
         let script = """
+        set SEP to ASCII character 9
         tell application "Ghostty"
-            set ids to {}
+            set acc to {}
             repeat with w in windows
                 repeat with t in tabs of w
                     repeat with s in terminals of t
-                        set end of ids to ((id of s) as string)
+                        set sid to (id of s) as string
+                        set stt to ""
+                        try
+                            set stt to (title of s) as string
+                        end try
+                        set end of acc to sid & SEP & stt
                     end repeat
                 end repeat
             end repeat
             set AppleScript's text item delimiters to linefeed
-            return ids as text
+            return acc as text
         end tell
         """
         var err: NSDictionary?
         guard let apple = NSAppleScript(source: script) else {
             NSLog("AgentMenuBar.GhosttyInventory: NSAppleScript init failed")
-            return []
+            return [:]
         }
         let result = apple.executeAndReturnError(&err)
         if let err {
             let msg = (err[NSAppleScript.errorMessage] as? String) ?? String(describing: err)
             NSLog("AgentMenuBar.GhosttyInventory: AppleScript error: %@", msg)
-            return []
+            return [:]
         }
-        let raw = result.stringValue ?? ""
-        let set = Set(
-            raw.split(separator: "\n")
-               .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-               .filter { !$0.isEmpty }
-        )
-        NSLog("AgentMenuBar.GhosttyInventory: fetched %d alive ids", set.count)
-        return set
+        let dict = ITermInventory.parseIdTitleLines(result.stringValue ?? "")
+        NSLog("AgentMenuBar.GhosttyInventory: fetched \(dict.count) alive tabs")
+        return dict
     }
 
     /// Look up the AppleScript-side UUID for the terminal whose

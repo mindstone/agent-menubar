@@ -11,8 +11,12 @@ struct TransientBanner: Equatable {
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [DroidSession] = []
     @Published private(set) var menuBarState: MenuBarState = .idle
-    @Published private(set) var aliveItermUUIDs: Set<String> = []
-    @Published private(set) var aliveGhosttyIDs: Set<String> = []
+    /// `unique id of session` → current `name of session`. The keys are the
+    /// alive-tab set used by `visibleSessions`; the values feed each row's
+    /// tab-title meta line.
+    @Published private(set) var aliveItermTabs: [String: String] = [:]
+    /// `id of terminal` (AppleScript UUID) → current `title of terminal`.
+    @Published private(set) var aliveGhosttyTabs: [String: String] = [:]
     @Published var banner: TransientBanner?
 
     /// Sessions to show in the UI: one entry per currently-open terminal tab,
@@ -24,7 +28,7 @@ final class SessionStore: ObservableObject {
         var orphans: [DroidSession] = []
         for s in sessions {
             if let id = s.ghosttyTerminalId, !id.isEmpty {
-                guard aliveGhosttyIDs.contains(id) else { continue }
+                guard aliveGhosttyTabs[id] != nil else { continue }
                 let key = "ghostty:\(id)"
                 if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
                     continue
@@ -39,7 +43,7 @@ final class SessionStore: ObservableObject {
                 orphans.append(s)
             } else if let raw = s.itermSessionId, !raw.isEmpty {
                 let uuid = ITermFocuser.uuidFromRaw(raw)
-                guard aliveItermUUIDs.contains(uuid) else { continue }
+                guard aliveItermTabs[uuid] != nil else { continue }
                 let key = "iterm:\(uuid)"
                 if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
                     continue
@@ -96,23 +100,56 @@ final class SessionStore: ObservableObject {
 
     private func refreshTerminalInventory() {
         Task.detached { [weak self] in
-            async let iterm = ITermInventory.fetchAliveUUIDs()
-            async let ghostty = GhosttyInventory.fetchAliveIDs()
+            async let iterm = ITermInventory.fetchAliveTabs()
+            async let ghostty = GhosttyInventory.fetchAliveTabs()
             let (aliveIterm, aliveGhostty) = await (iterm, ghostty)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                var changed = false
-                if aliveIterm != self.aliveItermUUIDs {
-                    self.aliveItermUUIDs = aliveIterm
-                    changed = true
+                var setChanged = false
+                if aliveIterm != self.aliveItermTabs {
+                    self.aliveItermTabs = aliveIterm
+                    setChanged = true
                 }
-                if aliveGhostty != self.aliveGhosttyIDs {
-                    self.aliveGhosttyIDs = aliveGhostty
-                    changed = true
+                if aliveGhostty != self.aliveGhosttyTabs {
+                    self.aliveGhosttyTabs = aliveGhostty
+                    setChanged = true
                 }
-                if changed { self.recomputeBarState() }
+                let titlesChanged = self.syncTabTitlesIntoSessions()
+                if setChanged { self.recomputeBarState() }
+                if titlesChanged { self.save() }
             }
         }
+    }
+
+    /// Push current tab-title values from the alive-tabs dicts onto each
+    /// `DroidSession.tabTitle`. Returns `true` if any session's title
+    /// changed, so the caller can persist. Runs on the main actor only.
+    @MainActor
+    private func syncTabTitlesIntoSessions() -> Bool {
+        var anyChanged = false
+        for i in sessions.indices {
+            let next: String?
+            if let id = sessions[i].ghosttyTerminalId, !id.isEmpty {
+                next = aliveGhosttyTabs[id]
+            } else if let raw = sessions[i].itermSessionId, !raw.isEmpty {
+                let uuid = ITermFocuser.uuidFromRaw(raw)
+                next = aliveItermTabs[uuid]
+            } else {
+                next = nil
+            }
+            // Only update for terminals we currently know about. An absent
+            // mapping means the tab is gone (already filtered out by
+            // visibleSessions) or the terminal app is closed — preserve the
+            // last-known title in either case so closed rows still read.
+            guard let resolved = next else { continue }
+            let trimmed = resolved.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value: String? = trimmed.isEmpty ? nil : trimmed
+            if sessions[i].tabTitle != value {
+                sessions[i].tabTitle = value
+                anyChanged = true
+            }
+        }
+        return anyChanged
     }
 
     /// Bind a session's `ghosttyTerminalId` (the AppleScript-side UUID) by
@@ -217,7 +254,11 @@ final class SessionStore: ObservableObject {
         case "UserPromptSubmit":
             s.status = .running
             s.attentionRaisedAt = nil
-            s.lastEvent = event.prompt?.firstMeaningfulLine() ?? "Working…"
+            let line = event.prompt?.firstMeaningfulLine()
+            s.lastEvent = line ?? "Working…"
+            if (s.firstPrompt ?? "").isEmpty, let firstLine = line, !firstLine.isEmpty {
+                s.firstPrompt = firstLine
+            }
 
         case "Stop":
             // Stop fires after every model turn. From the user's POV, between
