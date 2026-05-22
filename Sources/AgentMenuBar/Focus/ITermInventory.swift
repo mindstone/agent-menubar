@@ -1,7 +1,13 @@
 import Foundation
+import AppKit
 
 enum ITermInventory {
     static func fetchAliveUUIDs() -> Set<String> {
+        // `tell application "iTerm"` against a non-running iTerm would
+        // auto-launch it. Skip the AppleScript when it isn't running so the
+        // 5s inventory poll stays passive for users who don't have iTerm open.
+        guard isItermRunning() else { return [] }
+
         let script = """
         tell application "iTerm"
             set ids to {}
@@ -35,5 +41,11 @@ enum ITermInventory {
         )
         NSLog("AgentMenuBar.ITermInventory: fetched %d alive uuids", set.count)
         return set
+    }
+
+    static func isItermRunning() -> Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == "com.googlecode.iterm2"
+        }
     }
 }
