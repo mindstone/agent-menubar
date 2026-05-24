@@ -23,6 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var flashOn: Bool = true
     private var currentState: MenuBarState = .idle
     private var notchHUD: NotchHUDController?
+    private var hotkeyManager: GlobalHotkeyManager?
+    private var hotkeyDefaultsObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -75,7 +77,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.toggleNotchPopover() }
         }
 
+        hotkeyManager = GlobalHotkeyManager { [weak self] in
+            Task { @MainActor in self?.toggleFromHotkey() }
+        }
+        applyHotkeyFromDefaults()
+        hotkeyDefaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: UserDefaults.standard,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyHotkeyFromDefaults() }
+        }
+
         NSLog("AgentMenuBar: status item registered (visible=\(item.isVisible))")
+    }
+
+    private func applyHotkeyFromDefaults() {
+        let raw = UserDefaults.standard.string(forKey: HotkeyChoice.storageKey) ?? HotkeyChoice.off.rawValue
+        let choice = HotkeyChoice(rawValue: raw) ?? .off
+        hotkeyManager?.apply(choice)
+    }
+
+    private func toggleFromHotkey() {
+        guard let button = statusItem?.button else { return }
+        toggle(from: button)
     }
 
     @objc private func togglePopover(_ sender: Any?) {

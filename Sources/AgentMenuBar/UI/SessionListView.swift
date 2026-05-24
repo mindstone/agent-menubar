@@ -3,9 +3,14 @@ import SwiftUI
 struct SessionListView: View {
     @EnvironmentObject var store: SessionStore
     @AppStorage(NotchHUDMode.storageKey) private var notchModeRaw: String = NotchHUDMode.auto.rawValue
+    @AppStorage(HotkeyChoice.storageKey) private var hotkeyRaw: String = HotkeyChoice.off.rawValue
 
     private var notchMode: NotchHUDMode {
         NotchHUDMode(rawValue: notchModeRaw) ?? .auto
+    }
+
+    private var hotkey: HotkeyChoice {
+        HotkeyChoice(rawValue: hotkeyRaw) ?? .off
     }
 
     private var notchedScreenAvailable: Bool {
@@ -63,15 +68,21 @@ struct SessionListView: View {
             }
 
             Divider()
-            HStack(spacing: 12) {
-                Text("\(store.visibleSessions.count) tracked")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                notchHUDMenu
-                Button("Quit") { NSApp.terminate(nil) }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("\(store.visibleSessions.count) tracked")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button("Quit") { NSApp.terminate(nil) }
+                        .buttonStyle(.borderless)
+                        .font(.callout)
+                }
+                HStack(spacing: 12) {
+                    notchHUDMenu
+                    hotkeyMenu
+                    Spacer()
+                }
             }
             .padding(8)
         }
@@ -114,6 +125,31 @@ struct SessionListView: View {
         case .on:   return "Forced on. Falls back to top-center on un-notched displays."
         case .off:  return "Notch status bar disabled."
         }
+    }
+
+    private var hotkeyMenu: some View {
+        Menu {
+            ForEach(HotkeyChoice.allCases) { choice in
+                Button {
+                    hotkeyRaw = choice.rawValue
+                } label: {
+                    HStack {
+                        if choice.rawValue == hotkeyRaw {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(choice.label)
+                    }
+                }
+            }
+        } label: {
+            Text("Hotkey: \(hotkey.label)")
+        }
+        .menuStyle(.borderlessButton)
+        .font(.callout)
+        .fixedSize()
+        .help(hotkey == .off
+              ? "No global hotkey assigned."
+              : "Press \(hotkey.label) anywhere to open the agents popover.")
     }
 }
 
