@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var flashTimer: Timer?
     private var flashOn: Bool = true
     private var currentState: MenuBarState = .idle
+    private var notchHUD: NotchHUDController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -70,20 +71,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         render(store.menuBarState)
 
+        notchHUD = NotchHUDController(store: store) { [weak self] in
+            Task { @MainActor in self?.toggleNotchPopover() }
+        }
+
         NSLog("AgentMenuBar: status item registered (visible=\(item.isVisible))")
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem?.button, let popover else { return }
+        guard let button = statusItem?.button else { return }
+        toggle(from: button)
+    }
+
+    private func toggleNotchPopover() {
+        guard let anchor = notchHUD?.anchorView else { return }
+        toggle(from: anchor)
+    }
+
+    private func toggle(from anchor: NSView) {
+        guard let popover else { return }
         if popover.isShown {
-            popover.performClose(sender)
+            popover.performClose(nil)
             removeEventMonitor()
         } else {
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-            addEventMonitor()
+            presentPopover(from: anchor)
         }
+    }
+
+    private func presentPopover(from anchor: NSView) {
+        guard let popover else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+        addEventMonitor()
     }
 
     private func addEventMonitor() {

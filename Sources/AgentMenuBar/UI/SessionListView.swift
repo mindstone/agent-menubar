@@ -2,6 +2,15 @@ import SwiftUI
 
 struct SessionListView: View {
     @EnvironmentObject var store: SessionStore
+    @AppStorage(NotchHUDMode.storageKey) private var notchModeRaw: String = NotchHUDMode.auto.rawValue
+
+    private var notchMode: NotchHUDMode {
+        NotchHUDMode(rawValue: notchModeRaw) ?? .auto
+    }
+
+    private var notchedScreenAvailable: Bool {
+        NotchAvailability.notchedScreen() != nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -59,6 +68,7 @@ struct SessionListView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                 Spacer()
+                notchHUDMenu
                 Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(.borderless)
                     .font(.callout)
@@ -67,6 +77,43 @@ struct SessionListView: View {
         }
         .frame(width: 380)
         .animation(.easeInOut(duration: 0.18), value: store.banner)
+    }
+
+    private var notchHUDMenu: some View {
+        Menu {
+            ForEach(NotchHUDMode.allCases) { mode in
+                Button {
+                    notchModeRaw = mode.rawValue
+                } label: {
+                    HStack {
+                        if mode.rawValue == notchModeRaw {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(mode.label)
+                        if mode == .auto {
+                            Text(notchedScreenAvailable ? "(notch detected)" : "(no notch)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text("Notch status bar: \(notchMode.label)")
+        }
+        .menuStyle(.borderlessButton)
+        .font(.callout)
+        .fixedSize()
+        .help(notchHelp)
+    }
+
+    private var notchHelp: String {
+        switch notchMode {
+        case .auto: return notchedScreenAvailable
+            ? "Showing on the built-in display's notch."
+            : "No notched display detected; notch status bar hidden."
+        case .on:   return "Forced on. Falls back to top-center on un-notched displays."
+        case .off:  return "Notch status bar disabled."
+        }
     }
 }
 
