@@ -5,7 +5,8 @@ struct NotchView: View {
     @ObservedObject var store: SessionStore
     let notchInset: CGFloat
     let notchWidth: CGFloat
-    let onTap: () -> Void
+    let onFocusRequest: (DroidSession) -> Void
+    let onPopoverRequest: () -> Void
 
     @State private var hovered: Bool = false
     @State private var attentionPopVisible: Bool = false
@@ -91,31 +92,36 @@ struct NotchView: View {
     }
 
     private var pill: some View {
-        ZStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Reserve the part of the pill that's hidden behind the bezel.
+            Color.clear.frame(height: notchInset)
+
+            if isExpanded {
+                expandedCard
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else {
+                collapsedRow
+                    .frame(width: pillWidth, height: Self.collapsedVisibleHeight)
+            }
+        }
+        .frame(width: pillWidth)
+        .background {
             if isExpanded {
                 Color.black
                     .clipShape(BottomRoundedShape(radius: 22))
                     .transition(.opacity)
             }
-
-            VStack(alignment: .leading, spacing: 0) {
-                // Reserve the part of the pill that's hidden behind the bezel.
-                Color.clear.frame(height: notchInset)
-
-                if isExpanded {
-                    expandedCard
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                } else {
-                    collapsedRow
-                        .frame(width: pillWidth, height: Self.collapsedVisibleHeight)
-                }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isExpanded, let session = topSession {
+                onFocusRequest(session)
+            } else {
+                onPopoverRequest()
             }
         }
-        .frame(width: pillWidth)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
         .animation(animation, value: isExpanded)
         .animation(animation, value: counts.running)
         .animation(animation, value: counts.waiting)

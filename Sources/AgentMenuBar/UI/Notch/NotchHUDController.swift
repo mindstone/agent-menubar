@@ -5,7 +5,8 @@ import Combine
 @MainActor
 final class NotchHUDController {
     private let store: SessionStore
-    private let onTap: () -> Void
+    private let onFocus: (DroidSession) -> Void
+    private let onPopover: () -> Void
     private let panel: NotchPanel
     private let hosting: NSHostingView<NotchView>
     let anchorView: NSView
@@ -13,6 +14,7 @@ final class NotchHUDController {
     private var pinnedScreen: NSScreen?
     private var currentNotchInset: CGFloat = 32
     private var currentNotchWidth: CGFloat = 200
+    private var rightClickMonitor: Any?
 
     /// Total panel height = max bezel inset (~40 on 16") + max visible card
     /// height (96) + a small safety margin so the pill never gets clipped on
@@ -20,9 +22,14 @@ final class NotchHUDController {
     private static let panelHeight: CGFloat = 40 + 96 + 8
     private static let panelWidth: CGFloat = 360
 
-    init(store: SessionStore, onTap: @escaping () -> Void) {
+    init(
+        store: SessionStore,
+        onFocus: @escaping (DroidSession) -> Void,
+        onPopover: @escaping () -> Void
+    ) {
         self.store = store
-        self.onTap = onTap
+        self.onFocus = onFocus
+        self.onPopover = onPopover
 
         let panelRect = NSRect(x: 0, y: 0, width: Self.panelWidth, height: Self.panelHeight)
         self.panel = NotchPanel(
@@ -41,7 +48,13 @@ final class NotchHUDController {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
 
-        let view = NotchView(store: store, notchInset: 32, notchWidth: 200, onTap: onTap)
+        let view = NotchView(
+            store: store,
+            notchInset: 32,
+            notchWidth: 200,
+            onFocusRequest: onFocus,
+            onPopoverRequest: onPopover
+        )
         let host = NSHostingView(rootView: view)
         host.frame = panelRect
         host.autoresizingMask = [.width, .height]
@@ -67,11 +80,24 @@ final class NotchHUDController {
         observeStore()
         observeScreens()
         observeMode()
+        installRightClickMonitor()
         refreshVisibility()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+
+    private func installRightClickMonitor() {
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
+            guard let self, event.window === self.panel else { return event }
+            let action = self.onPopover
+            DispatchQueue.main.async { action() }
+            return nil
+        }
     }
 
     // MARK: - Observation
@@ -153,7 +179,13 @@ final class NotchHUDController {
         if insetChanged || widthChanged {
             currentNotchInset = inset
             currentNotchWidth = width
-            hosting.rootView = NotchView(store: store, notchInset: inset, notchWidth: width, onTap: onTap)
+            hosting.rootView = NotchView(
+                store: store,
+                notchInset: inset,
+                notchWidth: width,
+                onFocusRequest: onFocus,
+                onPopoverRequest: onPopover
+            )
 
             // Re-position the popover anchor relative to the new inset so the
             // popover drops just below the visible collapsed pill bottom.

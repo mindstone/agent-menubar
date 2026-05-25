@@ -73,9 +73,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
         render(store.menuBarState)
 
-        notchHUD = NotchHUDController(store: store) { [weak self] in
-            Task { @MainActor in self?.toggleNotchPopover() }
-        }
+        notchHUD = NotchHUDController(
+            store: store,
+            onFocus: { [weak self] session in
+                Task { @MainActor in self?.store.focus(session) }
+            },
+            onPopover: { [weak self] in
+                Task { @MainActor in self?.toggleNotchPopover() }
+            }
+        )
 
         hotkeyManager = GlobalHotkeyManager { [weak self] in
             Task { @MainActor in self?.toggleFromHotkey() }
