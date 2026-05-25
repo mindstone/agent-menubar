@@ -11,12 +11,15 @@ struct NotchView: View {
     @State private var hovered: Bool = false
     @State private var attentionPopVisible: Bool = false
     @State private var attentionTask: Task<Void, Never>? = nil
+    @State private var dismissedUntil: Date? = nil
+    @State private var dismissTask: Task<Void, Never>? = nil
     @Namespace private var ns
 
     static let collapsedVisibleHeight: CGFloat = 16
     private static let expandedWidth: CGFloat = 340
 
     private static let attentionDisplayDuration: UInt64 = 3_000_000_000
+    private static let dismissCooldown: TimeInterval = 15
 
     private var counts: (running: Int, waiting: Int, finished: Int) {
         if case let .active(r, w, f) = store.menuBarState {
@@ -26,7 +29,15 @@ struct NotchView: View {
     }
 
     private var hasAttention: Bool { store.menuBarState.hasAttention }
-    private var isExpanded: Bool { attentionPopVisible || hovered }
+
+    private var isDismissed: Bool {
+        if let until = dismissedUntil, Date() < until { return true }
+        return false
+    }
+
+    private var isExpanded: Bool {
+        !isDismissed && (attentionPopVisible || hovered)
+    }
 
     /// Monotonic signature that changes every time any session raises a new
     /// attention event (`Notification`, `PreToolUse(AskUser)`). Drives the
@@ -150,6 +161,7 @@ struct NotchView: View {
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
+                dismissButton
             }
             if let prompt = topSession?.firstPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
                 Text("› \(prompt)")
@@ -223,6 +235,32 @@ struct NotchView: View {
                     .stroke(Color.black.opacity(0.55), lineWidth: 0.5)
             )
             .modifier(AttentionPulse(active: pulse && !reduceMotion))
+    }
+
+    private var dismissButton: some View {
+        Button(action: dismiss) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.55))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Hide for \(Int(Self.dismissCooldown))s")
+    }
+
+    private func dismiss() {
+        attentionTask?.cancel()
+        attentionTask = nil
+        attentionPopVisible = false
+        let until = Date().addingTimeInterval(Self.dismissCooldown)
+        dismissedUntil = until
+        dismissTask?.cancel()
+        dismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.dismissCooldown * 1_000_000_000))
+            if !Task.isCancelled, dismissedUntil == until {
+                dismissedUntil = nil
+            }
+        }
     }
 
     private var accessibilityLabel: String {
