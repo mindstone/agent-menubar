@@ -7,6 +7,7 @@ struct NotchView: View {
     let notchWidth: CGFloat
     let onFocusRequest: (DroidSession) -> Void
     let onPopoverRequest: () -> Void
+    let onPillBoundsChange: (CGRect) -> Void
 
     @State private var hovered: Bool = false
     @State private var attentionPopVisible: Bool = false
@@ -74,7 +75,9 @@ struct NotchView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onHover { hovered = $0 }
+        .onPreferenceChange(PillBoundsKey.self) { rect in
+            onPillBoundsChange(rect)
+        }
         .onChange(of: attentionSignature) { new in
             handleAttentionEvent(new)
         }
@@ -125,7 +128,13 @@ struct NotchView: View {
                     .transition(.opacity)
             }
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: PillBoundsKey.self, value: proxy.frame(in: .global))
+            }
+        )
         .contentShape(Rectangle())
+        .onHover { hovered = $0 }
         .onTapGesture {
             if isExpanded, let session = topSession {
                 onFocusRequest(session)
@@ -282,6 +291,13 @@ private struct AttentionPulse: ViewModifier {
                     on.toggle()
                 }
             }
+    }
+}
+
+struct PillBoundsKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }
 

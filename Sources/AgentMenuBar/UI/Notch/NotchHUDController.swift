@@ -15,6 +15,9 @@ final class NotchHUDController {
     private var currentNotchInset: CGFloat = 32
     private var currentNotchWidth: CGFloat = 200
     private var rightClickMonitor: Any?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var pillBoundsInPanel: CGRect = .zero
 
     /// Total panel height = max bezel inset (~40 on 16") + max visible card
     /// height (96) + a small safety margin so the pill never gets clipped on
@@ -46,14 +49,21 @@ final class NotchHUDController {
         panel.isMovable = false
         panel.acceptsMouseMovedEvents = true
         panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = false
+        // Start fully pass-through. The mouse-moved monitor flips this off
+        // when the cursor enters the visible pill so the rest of the panel
+        // surface is permanently click-through to apps underneath.
+        panel.ignoresMouseEvents = true
 
+        // Seed with a no-op bounds callback so we can finish initialising
+        // stored properties; the real callback is wired below once `self`
+        // is fully formed.
         let view = NotchView(
             store: store,
             notchInset: 32,
             notchWidth: 200,
             onFocusRequest: onFocus,
-            onPopoverRequest: onPopover
+            onPopoverRequest: onPopover,
+            onPillBoundsChange: { _ in }
         )
         let host = NSHostingView(rootView: view)
         host.frame = panelRect
@@ -77,16 +87,35 @@ final class NotchHUDController {
         container.addSubview(anchor)
         panel.contentView = container
 
+        // Swap in the real bounds callback now that `self` is initialised.
+        hosting.rootView = NotchView(
+            store: store,
+            notchInset: 32,
+            notchWidth: 200,
+            onFocusRequest: onFocus,
+            onPopoverRequest: onPopover,
+            onPillBoundsChange: { [weak self] rect in
+                Task { @MainActor in self?.updatePillBounds(rect) }
+            }
+        )
+
         observeStore()
         observeScreens()
         observeMode()
         installRightClickMonitor()
+        installMouseMoveMonitors()
         refreshVisibility()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
         if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = globalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = localMouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
     }
@@ -97,6 +126,46 @@ final class NotchHUDController {
             let action = self.onPopover
             DispatchQueue.main.async { action() }
             return nil
+        }
+    }
+
+    /// Toggle `panel.ignoresMouseEvents` based on whether the cursor is over
+    /// the visible pill. Without this the full 360×144 panel intercepts every
+    /// click in the top-center of the screen, blocking the app underneath.
+    private func installMouseMoveMonitors() {
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            Task { @MainActor in self?.updatePassthrough() }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            Task { @MainActor in self?.updatePassthrough() }
+            return event
+        }
+    }
+
+    fileprivate func updatePillBounds(_ rect: CGRect) {
+        pillBoundsInPanel = rect
+        updatePassthrough()
+    }
+
+    private func updatePassthrough() {
+        guard panel.isVisible, pillBoundsInPanel.width > 0, pillBoundsInPanel.height > 0 else {
+            if !panel.ignoresMouseEvents { panel.ignoresMouseEvents = true }
+            return
+        }
+        // SwiftUI .global is top-down inside the hosting view; panel.frame is
+        // bottom-up screen coords. Convert pill bounds → screen rect.
+        let panelFrame = panel.frame
+        let pillScreenRect = NSRect(
+            x: panelFrame.origin.x + pillBoundsInPanel.origin.x,
+            y: panelFrame.maxY - pillBoundsInPanel.maxY,
+            width: pillBoundsInPanel.width,
+            height: pillBoundsInPanel.height
+        )
+        let cursor = NSEvent.mouseLocation
+        let cursorOverPill = pillScreenRect.contains(cursor)
+        let shouldIgnore = !cursorOverPill
+        if panel.ignoresMouseEvents != shouldIgnore {
+            panel.ignoresMouseEvents = shouldIgnore
         }
     }
 
@@ -184,7 +253,10 @@ final class NotchHUDController {
                 notchInset: inset,
                 notchWidth: width,
                 onFocusRequest: onFocus,
-                onPopoverRequest: onPopover
+                onPopoverRequest: onPopover,
+                onPillBoundsChange: { [weak self] rect in
+                    Task { @MainActor in self?.updatePillBounds(rect) }
+                }
             )
 
             // Re-position the popover anchor relative to the new inset so the
