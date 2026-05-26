@@ -8,6 +8,7 @@ struct NotchView: View {
     let onFocusRequest: (DroidSession) -> Void
     let onPopoverRequest: () -> Void
     let onPillBoundsChange: (CGRect) -> Void
+    let onExpansionChange: (Bool) -> Void
 
     @State private var hovered: Bool = false
     @State private var attentionPopVisible: Bool = false
@@ -77,6 +78,9 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onPreferenceChange(PillBoundsKey.self) { rect in
             onPillBoundsChange(rect)
+        }
+        .onChange(of: isExpanded) { expanded in
+            onExpansionChange(expanded)
         }
         .onChange(of: attentionSignature) { new in
             handleAttentionEvent(new)

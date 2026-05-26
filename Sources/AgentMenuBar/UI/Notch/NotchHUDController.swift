@@ -18,6 +18,7 @@ final class NotchHUDController {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var pillBoundsInPanel: CGRect = .zero
+    private var swiftUIExpanded: Bool = false
 
     /// Total panel height = max bezel inset (~40 on 16") + max visible card
     /// height (96) + a small safety margin so the pill never gets clipped on
@@ -63,7 +64,8 @@ final class NotchHUDController {
             notchWidth: 200,
             onFocusRequest: onFocus,
             onPopoverRequest: onPopover,
-            onPillBoundsChange: { _ in }
+            onPillBoundsChange: { _ in },
+            onExpansionChange: { _ in }
         )
         let host = NSHostingView(rootView: view)
         host.frame = panelRect
@@ -87,7 +89,7 @@ final class NotchHUDController {
         container.addSubview(anchor)
         panel.contentView = container
 
-        // Swap in the real bounds callback now that `self` is initialised.
+        // Swap in the real callbacks now that `self` is initialised.
         hosting.rootView = NotchView(
             store: store,
             notchInset: 32,
@@ -96,6 +98,9 @@ final class NotchHUDController {
             onPopoverRequest: onPopover,
             onPillBoundsChange: { [weak self] rect in
                 Task { @MainActor in self?.updatePillBounds(rect) }
+            },
+            onExpansionChange: { [weak self] expanded in
+                Task { @MainActor in self?.updateExpansion(expanded) }
             }
         )
 
@@ -147,8 +152,25 @@ final class NotchHUDController {
         updatePassthrough()
     }
 
+    fileprivate func updateExpansion(_ expanded: Bool) {
+        swiftUIExpanded = expanded
+        updatePassthrough()
+    }
+
     private func updatePassthrough() {
-        guard panel.isVisible, pillBoundsInPanel.width > 0, pillBoundsInPanel.height > 0 else {
+        guard panel.isVisible else {
+            if !panel.ignoresMouseEvents { panel.ignoresMouseEvents = true }
+            return
+        }
+        // While expanded, keep the panel fully interactive — clicking, hover,
+        // right-click and the × button must all reach SwiftUI even if the
+        // PreferenceKey-driven bounds haven't republished the new rect yet
+        // and the cursor has drifted off the old collapsed bounds.
+        if swiftUIExpanded {
+            if panel.ignoresMouseEvents { panel.ignoresMouseEvents = false }
+            return
+        }
+        guard pillBoundsInPanel.width > 0, pillBoundsInPanel.height > 0 else {
             if !panel.ignoresMouseEvents { panel.ignoresMouseEvents = true }
             return
         }
@@ -256,6 +278,9 @@ final class NotchHUDController {
                 onPopoverRequest: onPopover,
                 onPillBoundsChange: { [weak self] rect in
                     Task { @MainActor in self?.updatePillBounds(rect) }
+                },
+                onExpansionChange: { [weak self] expanded in
+                    Task { @MainActor in self?.updateExpansion(expanded) }
                 }
             )
 
