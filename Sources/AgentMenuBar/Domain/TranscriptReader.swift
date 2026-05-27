@@ -1,6 +1,6 @@
 import Foundation
 
-/// Best-effort reader for the tail of a Factory transcript file.
+/// Best-effort reader for the tail of an agent transcript file.
 /// We do not assume a strict schema. We try a few common shapes, and
 /// fall back to "last non-empty text-ish line" if nothing structured matches.
 enum TranscriptReader {

@@ -1,0 +1,20 @@
+{
+  "_comment": "Codex CLI example. Merge the 'hooks' object into ~/.codex/hooks.json. The 'make install-codex-hooks' target does this idempotently.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
+    "PermissionRequest": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ]
+  }
+}

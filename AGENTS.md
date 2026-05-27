@@ -4,21 +4,22 @@ Context for AI agents working in this repo. See `README.md` first for the projec
 
 ## Scope and portability
 
-This menu bar app is currently built for **Factory's Droid CLI** running inside **iTerm2** on macOS. The vendor coupling lives in exactly two places:
+This menu bar app currently supports **Factory's Droid CLI** and **OpenAI Codex CLI** running inside supported macOS terminals. The vendor coupling lives in adapter-level files:
 
-- `hooks/factory-event-bridge.sh` + `Domain/HookEvent.swift` — the event source (Factory's hook payload shape).
-- `Focus/ITermFocuser.swift` + `Focus/ITermInventory.swift` — terminal focus and live-tab inventory (iTerm's AppleScript dictionary + the `$ITERM_SESSION_ID` env var captured by the bridge).
+- `hooks/{factory,codex}-event-bridge.sh` + `hooks/agent-event-bridge.sh` — hook source wrappers and shared socket forwarding.
+- `Domain/HookEvent.swift` + `Domain/AgentEventAdapter.swift` — the decoded hook payload and per-agent state transitions.
+- `Focus/*Focuser.swift` + `Focus/*Inventory.swift` — terminal focus and live-tab inventory.
 
 Everything else (`Store/`, `UI/`, `IPC/`, the rest of `Domain/`) is vendor-neutral. Keep it that way; don't push vendor-specific branches inward.
 
 ### Using this on an unsupported stack today
 
-You can't, beyond seeing an empty popover. Rows will be unclickable (no session id is captured to focus by) and no events will reach the app (the bridge is only registered with Factory's hook system).
+You can't, beyond seeing an empty popover. Rows will be unclickable if no supported terminal id can be captured, and no events will reach the app unless that CLI has a hook wrapper registered.
 
 ### Extension sketch for future support (not implemented)
 
-- **Other coding agents** (Cursor, Claude Code, …): add one shell bridge per agent that normalises that agent's hook payload into the existing `HookEvent` JSON on stdin → socket. Extend `SessionStore.apply` with adapters for any new event names. The state machine (`running` → `waitingForInput` → `finished`) maps cleanly onto any prompt-driven agent loop.
-- **Other terminals** (Terminal.app, Warp, Ghostty, …): introduce `TerminalFocuser` and `TerminalInventory` protocols, pick the implementation at hook-receive time using the already-captured `$TERM_PROGRAM`, and rename the persisted field `itermSessionId` → `terminalSessionId` with a sibling `terminalKind`. Terminal.app is easiest (AppleScript-controllable); Warp and Ghostty have no stable public scripting interface today.
+- **Other coding agents** (Cursor, Claude Code, …): add one shell wrapper per agent that invokes `agent-event-bridge.sh <agent-kind>`, add an `AgentKind`, and add one `AgentEventAdapter` implementation for that CLI's event semantics. The state machine (`running` → `waitingForInput` → `finished`) maps cleanly onto any prompt-driven agent loop.
+- **Other terminals** (Terminal.app, Warp, …): add terminal-specific inventory/focus adapters under `Sources/AgentMenuBar/Focus/`, then route from `DroidSession.hostApp`. Terminal.app is easiest (AppleScript-controllable); Warp has no stable public scripting interface today.
 
 Keep the abstraction at the **adapter** level — one Swift type per concrete terminal/agent. Don't try to generalise `HookEvent` keys or invent a plugin runtime; the surface is small enough that thin protocols are enough.
 
@@ -26,32 +27,34 @@ Keep the abstraction at the **adapter** level — one Swift type per concrete te
 
 The right iteration command is `make install` (builds release, packages the `.app`, copies to `/Applications`, relaunches). `make run` runs the raw SwiftPM binary, which on macOS 26 has unreliable status-item visibility — only useful for the very first compile check.
 
-After editing Swift code: `make install`. After editing the hook bridge or its registration: also `make install-hooks` (the user's `~/.factory/settings.json` is the source of truth; **droid CLI snapshots hooks at startup, so existing droid sessions won't see new hooks until they restart**).
+After editing Swift code: `make install`. After editing the hook bridge or its registration: also `make install-hooks`. Factory's `~/.factory/settings.json` and Codex's `~/.codex/hooks.json` are the hook sources of truth. Existing Droid sessions need restart because Droid snapshots hooks at startup; Codex sessions may also need `/hooks` review/trust after the hook definition changes.
 
 ## Where state and logs live
 
 - `~/Library/Application Support/AgentMenuBar/sessions.json` — persisted session store (atomic rename)
 - `~/Library/Application Support/AgentMenuBar/sock` — Unix domain socket the bridge writes to
 - `~/Library/Logs/AgentMenuBar/events.log` — every augmented hook payload, appended even when the app is offline. First place to look when behaviour is wrong.
-- `~/.factory/settings.json` — where `install-hooks` registers the bridge
+- `~/.factory/settings.json` — where `install-factory-hooks` registers the Droid bridge
+- `~/.codex/hooks.json` — where `install-codex-hooks` registers the Codex bridge
 
 ## Status state machine (more nuanced than the README table)
 
-Factory's `Stop` hook fires after **every** model turn, not at session end. From the user's POV, between turns the droid is idle ⇒ rendered as `DONE`. Concretely:
+Factory and Codex `Stop` hooks are turn-scoped, not necessarily process/session end. From the user's POV, between turns the agent is idle ⇒ rendered as `DONE`. Concretely:
 
 | Event | Status transition | Notes |
 |---|---|---|
 | `SessionStart` | → running | |
 | `UserPromptSubmit` | → running | user typed a new prompt |
 | `Notification` | → waitingForInput | permission prompt or 60s-idle alert |
+| `PermissionRequest` | → waitingForInput | Codex approval prompt |
 | `PreToolUse` matcher `AskUser` | → waitingForInput | interactive choice picker; sound plays but no `Notification` fires for these |
-| `PostToolUse` matcher `AskUser` | → running | user answered the picker |
+| `PostToolUse` | → running | Factory `AskUser` answered, or Codex completed a tool after approval |
 | `Stop` | → finished | "current turn done, idle" — **not** session-end |
 | `SessionEnd` | → finished | actually done |
 
 The store keeps the literal `.finished` value across `Stop`s; the popover treats `.finished` as `DONE` and the next `UserPromptSubmit` flips it back to `.running`.
 
-`visibleSessions` collapses many historical droid runs sharing the same iTerm tab into one row (most recent by `lastEventAt`) and drops sessions whose iTerm tab is no longer open. This is driven by `ITermInventory.fetchAliveUUIDs()` running on a 5-second timer. Don't filter sessions for display anywhere else — use `store.visibleSessions`.
+`visibleSessions` collapses many historical agent runs sharing the same terminal tab into one row (most recent by `lastEventAt`) and drops sessions whose terminal tab is no longer open. This is driven by terminal inventory polling on a 5-second timer. Don't filter sessions for display anywhere else — use `store.visibleSessions`.
 
 ## macOS / Tahoe gotchas (don't regress these)
 
@@ -65,8 +68,9 @@ The store keeps the literal `.finished` value across `Stop`s; the popover treats
 
 `make install-hooks` uses a jq merge that:
 - Removes any prior entry whose `command` matches our bridge path before adding (idempotent)
-- Backs up `~/.factory/settings.json` with a timestamped `.bak` first
-- Registers two flavours: bare-event hooks (`SessionStart`, `SessionEnd`, `Notification`, `Stop`, `UserPromptSubmit`) and matcher hooks (`PreToolUse`/`PostToolUse` with `matcher: "AskUser"`)
+- Backs up `~/.factory/settings.json` and `~/.codex/hooks.json` with timestamped `.bak` files first
+- Factory: registers bare-event hooks (`SessionStart`, `SessionEnd`, `Notification`, `Stop`, `UserPromptSubmit`) and matcher hooks (`PreToolUse`/`PostToolUse` with `matcher: "AskUser"`)
+- Codex: registers `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`, and `Stop`
 
 If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook` jq function call lists so uninstall stays clean. Use `install_matcher_hook` when the event requires a matcher.
 
@@ -81,7 +85,7 @@ If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook
 
 - "Did my click reach SwiftUI?" → Add a temporary `NSLog` / file write in `SessionRowView.onTapGesture` and watch `~/Library/Logs/AgentMenuBar/`. Don't trust `log show` for app-level `NSLog`s under newer macOS — they're often redacted as `<private>`.
 - "Why doesn't the popover show this session?" → It's almost certainly the iTerm inventory filter. Run the script in `ITermInventory.fetchAliveUUIDs()`'s body manually via `osascript` and compare against `aliveItermUUIDs`.
-- "Hook didn't fire" → Tail `events.log` while triggering. If nothing appears the bridge wasn't called → check `~/.factory/settings.json` for the registration. If it appears but the app didn't react, the socket forwarding failed → check the app is running and `sock` exists.
+- "Hook didn't fire" → Tail `events.log` while triggering. If nothing appears the bridge wasn't called → check `~/.factory/settings.json` or `~/.codex/hooks.json` for the registration. For Codex, also open `/hooks` and confirm the hook was trusted. If an event appears but the app didn't react, the socket forwarding failed → check the app is running and `sock` exists.
 
 ## Coding conventions
 

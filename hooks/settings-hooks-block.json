@@ -1,5 +1,5 @@
 {
-  "_comment": "Merge the 'hooks' object into ~/.factory/settings.json. The 'make install-hooks' target does this idempotently.",
+  "_comment": "Factory Droid example. Merge the 'hooks' object into ~/.factory/settings.json. The 'make install-factory-hooks' target does this idempotently.",
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
@@ -15,6 +15,12 @@
     ],
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "AskUser", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "AskUser", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_HOOK", "timeout": 5 } ] }
     ]
   }
 }

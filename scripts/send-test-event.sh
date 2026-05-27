@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # send-test-event.sh
 #
-# Send a fake Factory hook event to the running AgentMenuBar app's socket.
-# Useful for development without firing up a real droid session.
+# Send fake hook events to the running AgentMenuBar app's socket.
+# Useful for development without firing up a real agent session.
 #
 # Usage:
 #   ./scripts/send-test-event.sh                                # one Notification + one Stop demo
@@ -33,6 +33,7 @@ send() {
         --arg ts    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '{
             hook_event_name: $event,
+            agent_kind:      "factory-droid",
             session_id:      $sid,
             cwd:             $cwd,
             message:         (if $msg    == "" then null else $msg    end),

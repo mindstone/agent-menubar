@@ -1,7 +1,8 @@
 import Foundation
 
 struct DroidSession: Codable, Identifiable, Equatable {
-    let id: String              // Factory session_id (canonical)
+    let id: String              // Agent session_id (canonical)
+    var agentKind: AgentKind
     var cwd: URL
     var repoName: String?
     var itermSessionId: String?
@@ -24,7 +25,7 @@ struct DroidSession: Codable, Identifiable, Equatable {
 
     /// The user's first prompt for this session, captured once on the first
     /// `UserPromptSubmit` and never overwritten. Surfaced in the popover as
-    /// the "task" subtitle so a row at a glance says what the droid was
+    /// the "task" subtitle so a row at a glance says what the agent was
     /// asked to do, separate from whatever it's currently chatting about.
     var firstPrompt: String?
 
@@ -45,5 +46,80 @@ struct DroidSession: Codable, Identifiable, Equatable {
             return .iTerm
         }
         return .unknown
+    }
+
+    init(
+        id: String,
+        agentKind: AgentKind,
+        cwd: URL,
+        repoName: String?,
+        itermSessionId: String?,
+        ghosttySurfaceId: String?,
+        ghosttyTerminalId: String? = nil,
+        status: SessionStatus,
+        lastEvent: String,
+        lastEventAt: Date,
+        startedAt: Date,
+        finishedAt: Date?,
+        transcriptPath: URL?,
+        attentionRaisedAt: Date?,
+        firstPrompt: String? = nil,
+        tabTitle: String? = nil
+    ) {
+        self.id = id
+        self.agentKind = agentKind
+        self.cwd = cwd
+        self.repoName = repoName
+        self.itermSessionId = itermSessionId
+        self.ghosttySurfaceId = ghosttySurfaceId
+        self.ghosttyTerminalId = ghosttyTerminalId
+        self.status = status
+        self.lastEvent = lastEvent
+        self.lastEventAt = lastEventAt
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.transcriptPath = transcriptPath
+        self.attentionRaisedAt = attentionRaisedAt
+        self.firstPrompt = firstPrompt
+        self.tabTitle = tabTitle
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case agentKind
+        case cwd
+        case repoName
+        case itermSessionId
+        case ghosttySurfaceId
+        case ghosttyTerminalId
+        case status
+        case lastEvent
+        case lastEventAt
+        case startedAt
+        case finishedAt
+        case transcriptPath
+        case attentionRaisedAt
+        case firstPrompt
+        case tabTitle
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        agentKind = try c.decodeIfPresent(AgentKind.self, forKey: .agentKind) ?? .factoryDroid
+        cwd = try c.decode(URL.self, forKey: .cwd)
+        repoName = try c.decodeIfPresent(String.self, forKey: .repoName)
+        itermSessionId = try c.decodeIfPresent(String.self, forKey: .itermSessionId)
+        ghosttySurfaceId = try c.decodeIfPresent(String.self, forKey: .ghosttySurfaceId)
+        ghosttyTerminalId = try c.decodeIfPresent(String.self, forKey: .ghosttyTerminalId)
+        status = try c.decode(SessionStatus.self, forKey: .status)
+        lastEvent = try c.decode(String.self, forKey: .lastEvent)
+        lastEventAt = try c.decode(Date.self, forKey: .lastEventAt)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
+        transcriptPath = try c.decodeIfPresent(URL.self, forKey: .transcriptPath)
+        attentionRaisedAt = try c.decodeIfPresent(Date.self, forKey: .attentionRaisedAt)
+        firstPrompt = try c.decodeIfPresent(String.self, forKey: .firstPrompt)
+        tabTitle = try c.decodeIfPresent(String.self, forKey: .tabTitle)
     }
 }

@@ -1,6 +1,9 @@
 REPO       := $(shell pwd)
-HOOK       := $(REPO)/hooks/factory-event-bridge.sh
-SETTINGS   := $(HOME)/.factory/settings.json
+COMMON_HOOK := $(REPO)/hooks/agent-event-bridge.sh
+FACTORY_HOOK := $(REPO)/hooks/factory-event-bridge.sh
+CODEX_HOOK := $(REPO)/hooks/codex-event-bridge.sh
+FACTORY_SETTINGS := $(HOME)/.factory/settings.json
+CODEX_SETTINGS := $(HOME)/.codex/hooks.json
 APP_NAME   := AgentMenuBar
 BIN_DEBUG  := $(REPO)/.build/debug/AgentMenuBar
 BIN_REL    := $(REPO)/.build/release/AgentMenuBar
@@ -9,7 +12,7 @@ APP_PLIST  := $(REPO)/Resources/Info.plist
 INSTALL_DIR := /Applications
 INSTALLED_APP := $(INSTALL_DIR)/$(APP_NAME).app
 
-.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks logs tail-events test-event clean help
+.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks install-factory-hooks uninstall-factory-hooks install-codex-hooks uninstall-codex-hooks logs tail-events test-event clean help
 
 help:
 	@echo "Targets:"
@@ -22,8 +25,10 @@ help:
 	@echo "  install            copy $(APP_NAME).app into /Applications and launch it"
 	@echo "  uninstall          remove $(APP_NAME).app from /Applications"
 	@echo "  stop               kill any running $(APP_NAME) process"
-	@echo "  install-hooks      add the bridge to ~/.factory/settings.json (additive, idempotent)"
-	@echo "  uninstall-hooks    remove the bridge from ~/.factory/settings.json"
+	@echo "  install-hooks      add Factory + Codex bridges (additive, idempotent)"
+	@echo "  uninstall-hooks    remove Factory + Codex bridges"
+	@echo "  install-factory-hooks / uninstall-factory-hooks"
+	@echo "  install-codex-hooks / uninstall-codex-hooks"
 	@echo "  test-event         send a fake Notification event to the running app"
 	@echo "  tail-events        tail the debug event log"
 	@echo "  clean              swift package clean"
@@ -77,12 +82,16 @@ uninstall: stop
 	@rm -rf "$(INSTALLED_APP)"
 	@echo "Removed $(INSTALLED_APP)"
 
-install-hooks:
-	@chmod +x "$(HOOK)"
-	@mkdir -p "$(dir $(SETTINGS))"
-	@if [ ! -f "$(SETTINGS)" ]; then echo "{}" > "$(SETTINGS)"; fi
-	@cp "$(SETTINGS)" "$(SETTINGS).bak.$$(date +%s)"
-	@jq --arg cmd "$(HOOK)" '\
+install-hooks: install-factory-hooks install-codex-hooks
+
+uninstall-hooks: uninstall-factory-hooks uninstall-codex-hooks
+
+install-factory-hooks:
+	@chmod +x "$(COMMON_HOOK)" "$(FACTORY_HOOK)"
+	@mkdir -p "$(dir $(FACTORY_SETTINGS))"
+	@if [ ! -f "$(FACTORY_SETTINGS)" ]; then echo "{}" > "$(FACTORY_SETTINGS)"; fi
+	@cp "$(FACTORY_SETTINGS)" "$(FACTORY_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(FACTORY_HOOK)" '\
 	  def install_hook($$e): \
 	    .hooks = (.hooks // {}) | \
 	    .hooks[$$e] = ( \
@@ -106,17 +115,17 @@ install-hooks:
 	  | install_hook("UserPromptSubmit") \
 	  | install_matcher_hook("PreToolUse"; "AskUser") \
 	  | install_matcher_hook("PostToolUse"; "AskUser") \
-	' "$(SETTINGS)" > "$(SETTINGS).new"
-	@mv "$(SETTINGS).new" "$(SETTINGS)"
-	@echo "Hooks installed. Backup: $(SETTINGS).bak.<ts>"
-	@echo "Bridge:   $(HOOK)"
+	' "$(FACTORY_SETTINGS)" > "$(FACTORY_SETTINGS).new"
+	@mv "$(FACTORY_SETTINGS).new" "$(FACTORY_SETTINGS)"
+	@echo "Factory hooks installed. Backup: $(FACTORY_SETTINGS).bak.<ts>"
+	@echo "Bridge:   $(FACTORY_HOOK)"
 
-uninstall-hooks:
-	@if [ ! -f "$(SETTINGS)" ]; then \
-	  echo "Nothing to do — $(SETTINGS) not present."; exit 0; \
+uninstall-factory-hooks:
+	@if [ ! -f "$(FACTORY_SETTINGS)" ]; then \
+	  echo "Nothing to do — $(FACTORY_SETTINGS) not present."; exit 0; \
 	fi
-	@cp "$(SETTINGS)" "$(SETTINGS).bak.$$(date +%s)"
-	@jq --arg cmd "$(HOOK)" '\
+	@cp "$(FACTORY_SETTINGS)" "$(FACTORY_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(FACTORY_HOOK)" '\
 	  def remove_hook($$e): \
 	    if (.hooks // {}) | has($$e) | not then . else \
 	      .hooks[$$e] = ( \
@@ -134,9 +143,62 @@ uninstall-hooks:
 	  | remove_hook("PreToolUse") \
 	  | remove_hook("PostToolUse") \
 	  | if (.hooks // {}) == {} then del(.hooks) else . end \
-	' "$(SETTINGS)" > "$(SETTINGS).new"
-	@mv "$(SETTINGS).new" "$(SETTINGS)"
-	@echo "Hooks removed. Backup: $(SETTINGS).bak.<ts>"
+	' "$(FACTORY_SETTINGS)" > "$(FACTORY_SETTINGS).new"
+	@mv "$(FACTORY_SETTINGS).new" "$(FACTORY_SETTINGS)"
+	@echo "Factory hooks removed. Backup: $(FACTORY_SETTINGS).bak.<ts>"
+
+install-codex-hooks:
+	@chmod +x "$(COMMON_HOOK)" "$(CODEX_HOOK)"
+	@mkdir -p "$(dir $(CODEX_SETTINGS))"
+	@if [ ! -f "$(CODEX_SETTINGS)" ]; then echo "{}" > "$(CODEX_SETTINGS)"; fi
+	@cp "$(CODEX_SETTINGS)" "$(CODEX_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CODEX_HOOK)" '\
+	  def hook_entry($$m): \
+	    ({hooks: [{type: "command", command: $$cmd, timeout: 5, statusMessage: "Updating AgentMenuBar"}]} \
+	      + (if $$m == "" then {} else {matcher: $$m} end)); \
+	  def install_hook($$e; $$m): \
+	    .hooks = (.hooks // {}) | \
+	    .hooks[$$e] = ( \
+	      ((.hooks[$$e] // []) \
+	        | map(.hooks |= map(select(.command != $$cmd))) \
+	        | map(select((.hooks // []) | length > 0))) \
+	      + [hook_entry($$m)] \
+	    ); \
+	  install_hook("SessionStart"; "") \
+	  | install_hook("UserPromptSubmit"; "") \
+	  | install_hook("PermissionRequest"; "*") \
+	  | install_hook("PostToolUse"; "*") \
+	  | install_hook("Stop"; "") \
+	' "$(CODEX_SETTINGS)" > "$(CODEX_SETTINGS).new"
+	@mv "$(CODEX_SETTINGS).new" "$(CODEX_SETTINGS)"
+	@echo "Codex hooks installed. Backup: $(CODEX_SETTINGS).bak.<ts>"
+	@echo "Bridge:   $(CODEX_HOOK)"
+	@echo "Open /hooks in Codex once to review and trust this hook definition."
+
+uninstall-codex-hooks:
+	@if [ ! -f "$(CODEX_SETTINGS)" ]; then \
+	  echo "Nothing to do — $(CODEX_SETTINGS) not present."; exit 0; \
+	fi
+	@cp "$(CODEX_SETTINGS)" "$(CODEX_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CODEX_HOOK)" '\
+	  def remove_hook($$e): \
+	    if (.hooks // {}) | has($$e) | not then . else \
+	      .hooks[$$e] = ( \
+	        ((.hooks[$$e] // []) \
+	         | map(.hooks |= map(select(.command != $$cmd))) \
+	         | map(select((.hooks // []) | length > 0))) \
+	      ) \
+	      | if (.hooks[$$e] | length) == 0 then del(.hooks[$$e]) else . end \
+	    end; \
+	  remove_hook("SessionStart") \
+	  | remove_hook("UserPromptSubmit") \
+	  | remove_hook("PermissionRequest") \
+	  | remove_hook("PostToolUse") \
+	  | remove_hook("Stop") \
+	  | if (.hooks // {}) == {} then del(.hooks) else . end \
+	' "$(CODEX_SETTINGS)" > "$(CODEX_SETTINGS).new"
+	@mv "$(CODEX_SETTINGS).new" "$(CODEX_SETTINGS)"
+	@echo "Codex hooks removed. Backup: $(CODEX_SETTINGS).bak.<ts>"
 
 test-event:
 	@$(REPO)/scripts/send-test-event.sh

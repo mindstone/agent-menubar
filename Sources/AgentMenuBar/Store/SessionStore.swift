@@ -20,9 +20,8 @@ final class SessionStore: ObservableObject {
     @Published var banner: TransientBanner?
 
     /// Sessions to show in the UI: one entry per currently-open terminal tab,
-    /// representing the most recent droid run in that tab. Sessions without a
-    /// terminal binding (e.g. droid invoked outside a recognised terminal) are
-    /// always passed through.
+    /// representing the most recent agent run in that tab. Sessions without a
+    /// terminal binding are always passed through.
     var visibleSessions: [DroidSession] {
         var latestPerTab: [String: DroidSession] = [:]
         var orphans: [DroidSession] = []
@@ -202,6 +201,7 @@ final class SessionStore: ObservableObject {
         if idx == nil {
             let new = DroidSession(
                 id: event.sessionId,
+                agentKind: event.agentKind,
                 cwd: cwdURL,
                 repoName: RepoInfo.repoName(forCwd: cwdURL),
                 itermSessionId: event.itermSessionId?.nilIfEmpty,
@@ -221,6 +221,9 @@ final class SessionStore: ObservableObject {
             idx = 0
         }
         var s = sessions[idx!]
+        if s.agentKind == .unknown && event.agentKind != .unknown {
+            s.agentKind = event.agentKind
+        }
 
         // Late-binding: keep first non-empty values.
         if (s.itermSessionId ?? "").isEmpty, let bound = event.itermSessionId?.nilIfEmpty {
@@ -239,75 +242,7 @@ final class SessionStore: ObservableObject {
         if s.transcriptPath == nil { s.transcriptPath = transcriptURL }
         s.lastEventAt = now
 
-        switch event.hookEventName {
-        case "SessionStart":
-            s.status = .running
-            s.startedAt = now
-            s.lastEvent = "Session started"
-            s.attentionRaisedAt = nil
-
-        case "Notification":
-            s.status = .waitingForInput
-            s.attentionRaisedAt = now
-            s.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
-
-        case "UserPromptSubmit":
-            s.status = .running
-            s.attentionRaisedAt = nil
-            let line = event.prompt?.firstMeaningfulLine()
-            s.lastEvent = line ?? "Working…"
-            if (s.firstPrompt ?? "").isEmpty, let firstLine = line, !firstLine.isEmpty {
-                s.firstPrompt = firstLine
-            }
-
-        case "Stop":
-            // Stop fires after every model turn. From the user's POV, between
-            // turns the droid is idle and effectively "done" with its current
-            // task — show it as finished. The next UserPromptSubmit will flip
-            // it back to running.
-            s.status = .finished
-            s.attentionRaisedAt = nil
-            if let t = s.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
-                s.lastEvent = tail
-            } else {
-                s.lastEvent = "Finished task"
-            }
-
-        case "SessionEnd":
-            s.status = .finished
-            s.finishedAt = now
-            s.attentionRaisedAt = nil
-            if s.lastEvent.isEmpty || s.lastEvent == "Starting…" {
-                s.lastEvent = "Session ended"
-            }
-
-        case "PreToolUse":
-            // The AskUser tool blocks the model while it waits for the user to
-            // pick from an interactive choice list — this is the in-conversation
-            // equivalent of a permission Notification. Mirror that as waiting
-            // for input so the menu bar flashes ❓.
-            if event.toolName == "AskUser" {
-                s.status = .waitingForInput
-                s.attentionRaisedAt = now
-                s.lastEvent = "Droid is asking you a question"
-            }
-
-        case "PostToolUse":
-            // AskUser just got resolved by the user picking an answer — flip
-            // back to running until Stop fires for the final reply.
-            if event.toolName == "AskUser" && s.status == .waitingForInput {
-                s.status = .running
-                s.attentionRaisedAt = nil
-            }
-
-        case "SubagentStop", "PreCompact":
-            // Bump activity but don't change visible state.
-            break
-
-        default:
-            // Unknown event types: swallow but keep activity timestamp.
-            break
-        }
+        AgentEventAdapters.adapter(for: s.agentKind).apply(event, to: &s, now: now)
 
         sessions[idx!] = s
         sortSessions()
@@ -335,7 +270,7 @@ final class SessionStore: ObservableObject {
         }
 
         guard let raw = session.itermSessionId, !raw.isEmpty else {
-            showBanner(.warning, "No terminal tab bound — this droid wasn't started inside a supported terminal.")
+            showBanner(.warning, "No terminal tab bound — this agent wasn't started inside a supported terminal.")
             return
         }
         Task.detached {

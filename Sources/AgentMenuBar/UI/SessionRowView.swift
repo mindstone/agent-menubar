@@ -20,6 +20,7 @@ struct SessionRowView: View {
                         .font(.system(size: 13, weight: waiting ? .bold : .semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    agentPill
                     statusPill
                     hostAppPill
                 }
@@ -142,6 +143,17 @@ struct SessionRowView: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(color)
+            .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var agentPill: some View {
+        Text(session.agentKind.displayName)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Color.primary.opacity(0.12))
             .clipShape(Capsule())
     }
 

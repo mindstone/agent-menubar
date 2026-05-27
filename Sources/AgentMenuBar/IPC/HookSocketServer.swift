@@ -3,7 +3,7 @@ import Darwin
 
 /// Listens on a Unix domain socket at
 /// ~/Library/Application Support/AgentMenuBar/sock for line-delimited JSON
-/// emitted by hooks/factory-event-bridge.sh.
+/// emitted by hook bridge scripts.
 ///
 /// Implementation: BSD socket(AF_UNIX, SOCK_STREAM) + DispatchSourceRead for
 /// non-blocking accept(). NWListener has no first-class UDS server API on

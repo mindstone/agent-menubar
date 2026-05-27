@@ -45,7 +45,7 @@ struct SessionListView: View {
                     Text("No agents yet.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Text("Open an iTerm tab and start an agent (e.g. `droid`). Make sure `make install-hooks` was run.")
+                    Text("Open a terminal tab and start an agent (e.g. `codex` or `droid`). Make sure `make install-hooks` was run.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
