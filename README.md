@@ -18,7 +18,7 @@ AgentMenuBar is the dashboard we wanted: at a glance, how many agents are *runni
 
 1. Listening to the agent CLI's documented hook events:
    - Factory Droid: `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, plus `PreToolUse`/`PostToolUse` for interactive `AskUser` prompts.
-   - Codex CLI: `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`, and turn-scoped `Stop`.
+   - Codex CLI: `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse(request_user_input)`, `PostToolUse`, and turn-scoped `Stop`.
 2. Capturing each session's `ITERM_SESSION_ID` at start.
 3. Showing one row per active agent in a popover, with click-to-focus that selects the exact iTerm window + tab.
 
@@ -28,7 +28,7 @@ No accessibility automation, no terminal scraping. Hooks + iTerm's own session U
 
 | Agent CLI | Hook source | Waiting signal | Done signal | Notes |
 |---|---|---|---|---|
-| OpenAI Codex CLI | `~/.codex/hooks.json` | `PermissionRequest` | turn-scoped `Stop` | Works after reviewing/trusting the hook in `/hooks`. Tested with real Codex `UserPromptSubmit`/`PostToolUse` hooks and manual lifecycle events. |
+| OpenAI Codex CLI | `~/.codex/hooks.json` | `PermissionRequest`, `Notification`, and `PreToolUse(request_user_input)` | turn-scoped `Stop` | Works after reviewing/trusting the hook in `/hooks`. Tested with real Codex `UserPromptSubmit`/`PostToolUse` hooks and manual lifecycle events. |
 | Factory Droid | `~/.factory/settings.json` | `Notification` and `PreToolUse` matcher `AskUser` | turn-scoped `Stop` or `SessionEnd` | Existing Droid sessions need restart after hook changes because Droid snapshots hooks at startup. |
 
 Both CLIs use the same socket bridge and persisted session store. CLI-specific behavior lives in `AgentEventAdapter`, so adding another agent should mean adding a thin hook wrapper plus one adapter instead of changing the UI or store shape.
@@ -81,7 +81,7 @@ To remove the hooks: `make uninstall-hooks` (your other hooks are preserved).
 After `make install-hooks` and `/hooks` trust, start or continue a Codex session in iTerm. The app should:
 
 - add/update a row on `UserPromptSubmit`
-- turn the row orange on `PermissionRequest`
+- turn the row orange on `PermissionRequest`, `Notification`, or Plan-mode `request_user_input`
 - turn it blue again on `PostToolUse`
 - mark it green on `Stop`
 
@@ -102,7 +102,7 @@ You'll see four notifications and one row in the popover, ending in "Finished ta
 | State | Colour | When |
 |---|---|---|
 | running | blue | After `SessionStart` or `UserPromptSubmit` |
-| waitingForInput | orange | On Factory `Notification`, Factory `AskUser`, or Codex `PermissionRequest` |
+| waitingForInput | orange | On Factory `Notification`, Factory `AskUser`, Codex `PermissionRequest`, Codex `Notification`, or Codex Plan-mode `request_user_input` |
 | finished | green | After `Stop` or `SessionEnd` |
 | stale | grey | A previously-running session whose process disappeared |
 

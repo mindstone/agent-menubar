@@ -47,8 +47,9 @@ Factory and Codex `Stop` hooks are turn-scoped, not necessarily process/session 
 | `UserPromptSubmit` | → running | user typed a new prompt |
 | `Notification` | → waitingForInput | permission prompt or 60s-idle alert |
 | `PermissionRequest` | → waitingForInput | Codex approval prompt |
-| `PreToolUse` matcher `AskUser` | → waitingForInput | interactive choice picker; sound plays but no `Notification` fires for these |
-| `PostToolUse` | → running | Factory `AskUser` answered, or Codex completed a tool after approval |
+| `PreToolUse` matcher `AskUser` | → waitingForInput | Factory interactive choice picker; sound plays but no `Notification` fires for these |
+| `PreToolUse` matcher `request_user_input` | → waitingForInput | Codex Plan-mode/user-input picker; this is not a `PermissionRequest` |
+| `PostToolUse` | → running | Factory `AskUser` answered, Codex user-input picker answered, or Codex completed a tool after approval |
 | `Stop` | → finished | "current turn done, idle" — **not** session-end |
 | `SessionEnd` | → finished | actually done |
 
@@ -70,7 +71,7 @@ The store keeps the literal `.finished` value across `Stop`s; the popover treats
 - Removes any prior entry whose `command` matches our bridge path before adding (idempotent)
 - Backs up `~/.factory/settings.json` and `~/.codex/hooks.json` with timestamped `.bak` files first
 - Factory: registers bare-event hooks (`SessionStart`, `SessionEnd`, `Notification`, `Stop`, `UserPromptSubmit`) and matcher hooks (`PreToolUse`/`PostToolUse` with `matcher: "AskUser"`)
-- Codex: registers `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`, and `Stop`
+- Codex: registers `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse` with `matcher: "request_user_input"`, `PostToolUse`, and `Stop`
 
 If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook` jq function call lists so uninstall stays clean. Use `install_matcher_hook` when the event requires a matcher.
 

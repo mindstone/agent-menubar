@@ -166,7 +166,9 @@ install-codex-hooks:
 	    ); \
 	  install_hook("SessionStart"; "") \
 	  | install_hook("UserPromptSubmit"; "") \
+	  | install_hook("Notification"; "") \
 	  | install_hook("PermissionRequest"; "*") \
+	  | install_hook("PreToolUse"; "request_user_input") \
 	  | install_hook("PostToolUse"; "*") \
 	  | install_hook("Stop"; "") \
 	' "$(CODEX_SETTINGS)" > "$(CODEX_SETTINGS).new"
@@ -192,7 +194,9 @@ uninstall-codex-hooks:
 	    end; \
 	  remove_hook("SessionStart") \
 	  | remove_hook("UserPromptSubmit") \
+	  | remove_hook("Notification") \
 	  | remove_hook("PermissionRequest") \
+	  | remove_hook("PreToolUse") \
 	  | remove_hook("PostToolUse") \
 	  | remove_hook("Stop") \
 	  | if (.hooks // {}) == {} then del(.hooks) else . end \

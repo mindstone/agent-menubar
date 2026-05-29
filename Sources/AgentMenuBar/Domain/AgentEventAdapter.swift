@@ -105,6 +105,14 @@ struct CodexEventAdapter: AgentEventAdapter {
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
 
+        case "PreToolUse":
+            if event.isUserInputRequest {
+                session.status = .waitingForInput
+                session.finishedAt = nil
+                session.attentionRaisedAt = now
+                session.lastEvent = event.message?.nilIfEmpty ?? "Codex is waiting for input"
+            }
+
         case "PostToolUse":
             if session.status == .waitingForInput {
                 session.status = .running
@@ -177,6 +185,16 @@ private extension HookEvent {
         case "compact": return "Session compacted"
         case "startup": return "Session started"
         default:        return nil
+        }
+    }
+
+    var isUserInputRequest: Bool {
+        guard let name = toolName?.nilIfEmpty else { return false }
+        switch name {
+        case "request_user_input", "RequestUserInput":
+            return true
+        default:
+            return false
         }
     }
 }

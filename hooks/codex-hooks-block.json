@@ -7,8 +7,14 @@
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
     ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
     "PermissionRequest": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "request_user_input", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
     ],
     "PostToolUse": [
       { "matcher": "*", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CODEX_HOOK", "timeout": 5, "statusMessage": "Updating AgentMenuBar" } ] }
