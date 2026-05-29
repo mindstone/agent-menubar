@@ -5,6 +5,7 @@ struct SessionListView: View {
     @AppStorage(NotchHUDMode.storageKey) private var notchModeRaw: String = NotchHUDMode.auto.rawValue
     @AppStorage(HotkeyChoice.storageKey) private var hotkeyRaw: String = HotkeyChoice.off.rawValue
     @State private var expandedSessionIds: Set<String> = []
+    @State private var frozenSessionOrder: [String]?
 
     private var notchMode: NotchHUDMode {
         NotchHUDMode(rawValue: notchModeRaw) ?? .auto
@@ -18,13 +19,27 @@ struct SessionListView: View {
         NotchAvailability.notchedScreen() != nil
     }
 
+    private var visibleSessions: [DroidSession] {
+        let visible = store.visibleSessions
+        guard let frozenSessionOrder else { return visible }
+
+        var remainingById = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        let pinned = frozenSessionOrder.compactMap { remainingById.removeValue(forKey: $0) }
+        let newlyVisible = visible.filter { remainingById[$0.id] != nil }
+        return pinned + newlyVisible
+    }
+
+    private var visibleSessionIds: [String] {
+        store.visibleSessions.map(\.id)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Agents")
                     .font(.headline)
                 Spacer()
-                if store.visibleSessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
+                if visibleSessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
                     Button("Clear finished") { store.clearFinished() }
                         .buttonStyle(.borderless)
                         .font(.callout)
@@ -41,7 +56,7 @@ struct SessionListView: View {
 
             Divider()
 
-            if store.visibleSessions.isEmpty {
+            if visibleSessions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("No agents yet.")
                         .font(.callout)
@@ -54,7 +69,7 @@ struct SessionListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(store.visibleSessions) { session in
+                        ForEach(visibleSessions) { session in
                             SessionRowView(
                                 session: session,
                                 isExpanded: expandedSessionIds.contains(session.id),
@@ -82,7 +97,7 @@ struct SessionListView: View {
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("\(store.visibleSessions.count) tracked")
+                    Text("\(visibleSessions.count) tracked")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
@@ -100,6 +115,26 @@ struct SessionListView: View {
         }
         .frame(width: 380)
         .animation(.easeInOut(duration: 0.18), value: store.banner)
+        .onAppear {
+            frozenSessionOrder = visibleSessionIds
+        }
+        .onDisappear {
+            frozenSessionOrder = nil
+            expandedSessionIds.removeAll()
+        }
+        .onChange(of: visibleSessionIds) { ids in
+            reconcileFrozenOrder(with: ids)
+        }
+    }
+
+    private func reconcileFrozenOrder(with visibleIds: [String]) {
+        guard var frozen = frozenSessionOrder else { return }
+        let visibleSet = Set(visibleIds)
+        frozen.removeAll { !visibleSet.contains($0) }
+
+        let frozenSet = Set(frozen)
+        frozen.append(contentsOf: visibleIds.filter { !frozenSet.contains($0) })
+        frozenSessionOrder = frozen
     }
 
     private var notchHUDMenu: some View {
