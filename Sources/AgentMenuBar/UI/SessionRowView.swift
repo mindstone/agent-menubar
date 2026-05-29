@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SessionRowView: View {
     let session: DroidSession
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
     let onFocus: () -> Void
 
     @State private var pulse: Bool = false
@@ -18,35 +20,39 @@ struct SessionRowView: View {
                 HStack(spacing: 6) {
                     Text(session.repoName ?? session.cwd.lastPathComponent)
                         .font(.system(size: 13, weight: waiting ? .bold : .semibold))
-                        .lineLimit(1)
+                        .lineLimit(isExpanded ? nil : 1)
                         .truncationMode(.tail)
                     agentPill
                     statusPill
                     hostAppPill
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .help(titleTooltip)
 
                 if let firstPrompt, !firstPrompt.isEmpty {
                     Text("› \(firstPrompt)")
                         .font(.system(size: 12).italic())
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(isExpanded ? nil : 1)
                         .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: isExpanded)
                         .help(firstPrompt)
                 }
 
                 Text(session.lastEvent)
                     .font(.system(size: 12))
                     .foregroundStyle(waiting ? .primary : .secondary)
-                    .lineLimit(2)
+                    .lineLimit(isExpanded ? nil : 2)
                     .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: isExpanded)
                     .help(session.lastEvent)
 
                 Text(metaLine(tabTitle: tabTitle))
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .lineLimit(isExpanded ? nil : 1)
                     .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: isExpanded)
                     .help(metaTooltip(tabTitle: tabTitle))
             }
             Spacer(minLength: 0)
@@ -61,7 +67,7 @@ struct SessionRowView: View {
                 .opacity(waiting || session.status == .running ? 1 : 0)
         }
         .contentShape(Rectangle())
-        .onTapGesture { onFocus() }
+        .gesture(rowTapGesture)
         .onAppear {
             if session.status == .running {
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
@@ -69,6 +75,12 @@ struct SessionRowView: View {
                 }
             }
         }
+    }
+
+    private var rowTapGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded { onFocus() }
+            .exclusively(before: TapGesture(count: 1).onEnded { onToggleExpanded() })
     }
 
     private var titleTooltip: String {

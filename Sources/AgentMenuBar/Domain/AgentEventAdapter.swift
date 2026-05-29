@@ -20,11 +20,13 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
         case "SessionStart":
             session.status = .running
             session.startedAt = now
+            session.finishedAt = nil
             session.lastEvent = "Session started"
             session.attentionRaisedAt = nil
 
         case "Notification":
             session.status = .waitingForInput
+            session.finishedAt = nil
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
 
@@ -33,6 +35,7 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
 
         case "Stop":
             session.status = .finished
+            session.finishedAt = now
             session.attentionRaisedAt = nil
             if let t = session.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
                 session.lastEvent = tail
@@ -51,6 +54,7 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
         case "PreToolUse":
             if event.toolName == "AskUser" {
                 session.status = .waitingForInput
+                session.finishedAt = nil
                 session.attentionRaisedAt = now
                 session.lastEvent = "Droid is asking you a question"
             }
@@ -58,6 +62,7 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
         case "PostToolUse":
             if event.toolName == "AskUser" && session.status == .waitingForInput {
                 session.status = .running
+                session.finishedAt = nil
                 session.attentionRaisedAt = nil
             }
 
@@ -73,6 +78,7 @@ struct CodexEventAdapter: AgentEventAdapter {
         case "SessionStart":
             session.status = .running
             session.startedAt = min(session.startedAt, now)
+            session.finishedAt = nil
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = event.sourceDescription ?? "Session started"
@@ -83,6 +89,7 @@ struct CodexEventAdapter: AgentEventAdapter {
 
         case "PermissionRequest":
             session.status = .waitingForInput
+            session.finishedAt = nil
             session.attentionRaisedAt = now
             if let message = event.message?.nilIfEmpty {
                 session.lastEvent = message
@@ -94,18 +101,21 @@ struct CodexEventAdapter: AgentEventAdapter {
 
         case "Notification":
             session.status = .waitingForInput
+            session.finishedAt = nil
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
 
         case "PostToolUse":
             if session.status == .waitingForInput {
                 session.status = .running
+                session.finishedAt = nil
                 session.attentionRaisedAt = nil
                 session.lastEvent = "Working…"
             }
 
         case "Stop":
             session.status = .finished
+            session.finishedAt = now
             session.attentionRaisedAt = nil
             if let summary = event.lastAssistantMessage?.firstMeaningfulLine(maxLength: 200) {
                 session.lastEvent = summary
@@ -127,17 +137,19 @@ struct GenericAgentEventAdapter: AgentEventAdapter {
         case "SessionStart":
             session.status = .running
             session.startedAt = now
+            session.finishedAt = nil
             session.attentionRaisedAt = nil
             session.lastEvent = "Session started"
         case "UserPromptSubmit":
             applyPrompt(event.prompt, to: &session)
         case "Notification", "PermissionRequest":
             session.status = .waitingForInput
+            session.finishedAt = nil
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
         case "Stop", "SessionEnd":
             session.status = .finished
-            session.finishedAt = event.hookEventName == "SessionEnd" ? now : session.finishedAt
+            session.finishedAt = now
             session.attentionRaisedAt = nil
             session.lastEvent = event.lastAssistantMessage?.firstMeaningfulLine(maxLength: 200) ?? "Finished turn"
         default:
@@ -148,6 +160,7 @@ struct GenericAgentEventAdapter: AgentEventAdapter {
 
 private func applyPrompt(_ prompt: String?, to session: inout DroidSession) {
     session.status = .running
+    session.finishedAt = nil
     session.attentionRaisedAt = nil
     let line = prompt?.firstMeaningfulLine()
     session.lastEvent = line ?? "Working…"

@@ -12,7 +12,11 @@ struct NotchView: View {
 
     @State private var hovered: Bool = false
     @State private var attentionPopVisible: Bool = false
+    @State private var completionPopVisible: Bool = false
+    @State private var completionPopSessionId: String?
+    @State private var lastCompletionSignature: TimeInterval = 0
     @State private var attentionTask: Task<Void, Never>? = nil
+    @State private var completionTask: Task<Void, Never>? = nil
     @State private var dismissedUntil: Date? = nil
     @State private var dismissTask: Task<Void, Never>? = nil
     @Namespace private var ns
@@ -21,6 +25,7 @@ struct NotchView: View {
     private static let expandedWidth: CGFloat = 340
 
     private static let attentionDisplayDuration: UInt64 = 3_000_000_000
+    private static let completionDisplayDuration: UInt64 = 3_000_000_000
     private static let dismissCooldown: TimeInterval = 15
 
     private var counts: (running: Int, waiting: Int, finished: Int) {
@@ -38,7 +43,7 @@ struct NotchView: View {
     }
 
     private var isExpanded: Bool {
-        !isDismissed && (attentionPopVisible || hovered)
+        !isDismissed && (attentionPopVisible || completionPopVisible || hovered)
     }
 
     /// Monotonic signature that changes every time any session raises a new
@@ -50,10 +55,26 @@ struct NotchView: View {
             .max() ?? 0
     }
 
+    private var completionSignature: TimeInterval {
+        latestFinishedSession?.finishedAt?.timeIntervalSince1970 ?? 0
+    }
+
     private var topSession: DroidSession? {
-        store.visibleSessions.first(where: { $0.status == .waitingForInput })
+        if let completionPopSessionId,
+           let session = store.visibleSessions.first(where: { $0.id == completionPopSessionId }) {
+            return session
+        }
+        return store.visibleSessions.first(where: { $0.status == .waitingForInput })
             ?? store.visibleSessions.first(where: { $0.status == .running })
             ?? store.visibleSessions.first
+    }
+
+    private var latestFinishedSession: DroidSession? {
+        store.visibleSessions
+            .filter { $0.status == .finished }
+            .max { a, b in
+                (a.finishedAt ?? a.lastEventAt) < (b.finishedAt ?? b.lastEventAt)
+            }
     }
 
     private var reduceMotion: Bool {
@@ -85,6 +106,12 @@ struct NotchView: View {
         .onChange(of: attentionSignature) { new in
             handleAttentionEvent(new)
         }
+        .onAppear {
+            lastCompletionSignature = completionSignature
+        }
+        .onChange(of: completionSignature) { new in
+            handleCompletionEvent(new)
+        }
         .onChange(of: hasAttention) { isAttention in
             if !isAttention {
                 attentionTask?.cancel()
@@ -105,6 +132,22 @@ struct NotchView: View {
             try? await Task.sleep(nanoseconds: Self.attentionDisplayDuration)
             if !Task.isCancelled {
                 attentionPopVisible = false
+            }
+        }
+    }
+
+    private func handleCompletionEvent(_ signature: TimeInterval) {
+        guard signature > lastCompletionSignature else { return }
+        lastCompletionSignature = signature
+        guard let session = latestFinishedSession else { return }
+        completionTask?.cancel()
+        completionPopSessionId = session.id
+        completionPopVisible = true
+        completionTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.completionDisplayDuration)
+            if !Task.isCancelled {
+                completionPopVisible = false
+                completionPopSessionId = nil
             }
         }
     }
@@ -263,8 +306,12 @@ struct NotchView: View {
 
     private func dismiss() {
         attentionTask?.cancel()
+        completionTask?.cancel()
         attentionTask = nil
+        completionTask = nil
         attentionPopVisible = false
+        completionPopVisible = false
+        completionPopSessionId = nil
         let until = Date().addingTimeInterval(Self.dismissCooldown)
         dismissedUntil = until
         dismissTask?.cancel()

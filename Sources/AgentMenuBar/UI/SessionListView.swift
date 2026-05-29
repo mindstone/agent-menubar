@@ -4,6 +4,7 @@ struct SessionListView: View {
     @EnvironmentObject var store: SessionStore
     @AppStorage(NotchHUDMode.storageKey) private var notchModeRaw: String = NotchHUDMode.auto.rawValue
     @AppStorage(HotkeyChoice.storageKey) private var hotkeyRaw: String = HotkeyChoice.off.rawValue
+    @State private var expandedSessionIds: Set<String> = []
 
     private var notchMode: NotchHUDMode {
         NotchHUDMode(rawValue: notchModeRaw) ?? .auto
@@ -54,9 +55,20 @@ struct SessionListView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(store.visibleSessions) { session in
-                            SessionRowView(session: session) {
-                                store.focus(session)
-                            }
+                            SessionRowView(
+                                session: session,
+                                isExpanded: expandedSessionIds.contains(session.id),
+                                onToggleExpanded: {
+                                    if expandedSessionIds.contains(session.id) {
+                                        expandedSessionIds.remove(session.id)
+                                    } else {
+                                        expandedSessionIds.insert(session.id)
+                                    }
+                                },
+                                onFocus: {
+                                    store.focus(session)
+                                }
+                            )
                             .contextMenu {
                                 Button("Remove from list") { store.remove(session) }
                             }

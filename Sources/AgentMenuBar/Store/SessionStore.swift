@@ -53,19 +53,7 @@ final class SessionStore: ObservableObject {
             }
         }
         let merged = Array(latestPerTab.values) + orphans
-        return merged.sorted { a, b in
-            func rank(_ st: SessionStatus) -> Int {
-                switch st {
-                case .waitingForInput: return 0
-                case .running:         return 1
-                case .finished:        return 2
-                case .stale:           return 3
-                }
-            }
-            let ra = rank(a.status), rb = rank(b.status)
-            if ra != rb { return ra < rb }
-            return a.lastEventAt > b.lastEventAt
-        }
+        return merged.sorted(by: Self.sessionSort)
     }
 
     private let pruneTTL: TimeInterval = 24 * 60 * 60      // forget finished sessions after 24h
@@ -373,19 +361,30 @@ final class SessionStore: ObservableObject {
     }
 
     private func sortSessions() {
-        sessions.sort { a, b in
-            // Waiting first, then running, then finished/stale.
-            func rank(_ st: SessionStatus) -> Int {
-                switch st {
-                case .waitingForInput: return 0
-                case .running:         return 1
-                case .finished:        return 2
-                case .stale:           return 3
-                }
-            }
-            let ra = rank(a.status), rb = rank(b.status)
-            if ra != rb { return ra < rb }
-            return a.lastEventAt > b.lastEventAt
+        sessions.sort(by: Self.sessionSort)
+    }
+
+    private static func sessionSort(_ a: DroidSession, _ b: DroidSession) -> Bool {
+        let ra = statusRank(a.status), rb = statusRank(b.status)
+        if ra != rb { return ra < rb }
+        return sortDate(for: a) > sortDate(for: b)
+    }
+
+    private static func statusRank(_ status: SessionStatus) -> Int {
+        switch status {
+        case .waitingForInput: return 0
+        case .running:         return 1
+        case .finished:        return 2
+        case .stale:           return 3
+        }
+    }
+
+    private static func sortDate(for session: DroidSession) -> Date {
+        switch session.status {
+        case .finished, .stale:
+            return session.finishedAt ?? session.lastEventAt
+        case .waitingForInput, .running:
+            return session.lastEventAt
         }
     }
 
