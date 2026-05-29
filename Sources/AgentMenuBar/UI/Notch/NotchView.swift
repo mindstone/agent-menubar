@@ -14,6 +14,7 @@ struct NotchView: View {
     @State private var attentionPopVisible: Bool = false
     @State private var completionPopVisible: Bool = false
     @State private var completionPopSessionId: String?
+    @State private var pinnedExpandedSessionId: String?
     @State private var lastCompletionSignature: TimeInterval = 0
     @State private var attentionTask: Task<Void, Never>? = nil
     @State private var completionTask: Task<Void, Never>? = nil
@@ -59,7 +60,7 @@ struct NotchView: View {
         latestFinishedSession?.finishedAt?.timeIntervalSince1970 ?? 0
     }
 
-    private var topSession: DroidSession? {
+    private var candidateSession: DroidSession? {
         if let completionPopSessionId,
            let session = store.visibleSessions.first(where: { $0.id == completionPopSessionId }) {
             return session
@@ -67,6 +68,14 @@ struct NotchView: View {
         return store.visibleSessions.first(where: { $0.status == .waitingForInput })
             ?? store.visibleSessions.first(where: { $0.status == .running })
             ?? store.visibleSessions.first
+    }
+
+    private var displayedSession: DroidSession? {
+        if let pinnedExpandedSessionId,
+           let session = store.visibleSessions.first(where: { $0.id == pinnedExpandedSessionId }) {
+            return session
+        }
+        return candidateSession
     }
 
     private var latestFinishedSession: DroidSession? {
@@ -100,9 +109,7 @@ struct NotchView: View {
         .onPreferenceChange(PillBoundsKey.self) { rect in
             onPillBoundsChange(rect)
         }
-        .onChange(of: isExpanded) { expanded in
-            onExpansionChange(expanded)
-        }
+        .onChange(of: isExpanded, perform: handleExpansionChange)
         .onChange(of: attentionSignature) { new in
             handleAttentionEvent(new)
         }
@@ -134,6 +141,15 @@ struct NotchView: View {
                 attentionPopVisible = false
             }
         }
+    }
+
+    private func handleExpansionChange(_ expanded: Bool) {
+        if expanded {
+            pinnedExpandedSessionId = candidateSession?.id
+        } else {
+            pinnedExpandedSessionId = nil
+        }
+        onExpansionChange(expanded)
     }
 
     private func handleCompletionEvent(_ signature: TimeInterval) {
@@ -183,7 +199,7 @@ struct NotchView: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture {
-            if isExpanded, let session = topSession {
+            if isExpanded, let session = displayedSession {
                 onFocusRequest(session)
             } else {
                 onPopoverRequest()
@@ -209,7 +225,7 @@ struct NotchView: View {
             HStack(spacing: 10) {
                 groupedSquares
                     .matchedGeometryEffect(id: "notchSquares", in: ns)
-                if let s = topSession {
+                if let s = displayedSession {
                     Text(s.repoName ?? s.cwd.lastPathComponent)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white)
@@ -219,21 +235,21 @@ struct NotchView: View {
                 Spacer(minLength: 0)
                 dismissButton
             }
-            if let prompt = topSession?.firstPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
+            if let prompt = displayedSession?.firstPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
                 Text("› \(prompt)")
                     .font(.system(size: 11).italic())
                     .foregroundStyle(.white.opacity(0.75))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            if let s = topSession {
+            if let s = displayedSession {
                 Text(s.lastEvent)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.7))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            if let title = topSession?.tabTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            if let title = displayedSession?.tabTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
                 Text(title)
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.5))
@@ -312,6 +328,7 @@ struct NotchView: View {
         attentionPopVisible = false
         completionPopVisible = false
         completionPopSessionId = nil
+        pinnedExpandedSessionId = nil
         let until = Date().addingTimeInterval(Self.dismissCooldown)
         dismissedUntil = until
         dismissTask?.cancel()
