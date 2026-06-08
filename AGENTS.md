@@ -4,9 +4,9 @@ Context for AI agents working in this repo. See `README.md` first for the projec
 
 ## Scope and portability
 
-This menu bar app currently supports **Factory's Droid CLI** and **OpenAI Codex CLI** running inside supported macOS terminals. The vendor coupling lives in adapter-level files:
+This menu bar app currently supports **Factory's Droid CLI**, **OpenAI Codex CLI**, and **Cursor's `cursor-agent` CLI** running inside supported macOS terminals. The vendor coupling lives in adapter-level files:
 
-- `hooks/{factory,codex}-event-bridge.sh` + `hooks/agent-event-bridge.sh` — hook source wrappers and shared socket forwarding.
+- `hooks/{factory,codex,cursor}-event-bridge.sh` + `hooks/agent-event-bridge.sh` — hook source wrappers and shared socket forwarding. The Cursor wrapper also normalises Cursor-specific field names (`conversation_id`→`session_id`, `workspace_roots[0]`→`cwd`, `prompt`/`text`→`prompt`) before the shared bridge runs.
 - `Domain/HookEvent.swift` + `Domain/AgentEventAdapter.swift` — the decoded hook payload and per-agent state transitions.
 - `Focus/*Focuser.swift` + `Focus/*Inventory.swift` — terminal focus and live-tab inventory.
 
@@ -27,7 +27,7 @@ Keep the abstraction at the **adapter** level — one Swift type per concrete te
 
 The right iteration command is `make install` (builds release, packages the `.app`, copies to `/Applications`, relaunches). `make run` runs the raw SwiftPM binary, which on macOS 26 has unreliable status-item visibility — only useful for the very first compile check.
 
-After editing Swift code: `make install`. After editing the hook bridge or its registration: also `make install-hooks`. Factory's `~/.factory/settings.json` and Codex's `~/.codex/hooks.json` are the hook sources of truth. Existing Droid sessions need restart because Droid snapshots hooks at startup; Codex sessions may also need `/hooks` review/trust after the hook definition changes.
+After editing Swift code: `make install`. After editing the hook bridge or its registration: also `make install-hooks` (Factory + Codex) and/or `make install-cursor-hooks` (Cursor is a separate target, see below). Factory's `~/.factory/settings.json`, Codex's `~/.codex/hooks.json`, and Cursor's `~/.cursor/hooks.json` are the hook sources of truth. Existing Droid sessions need restart because Droid snapshots hooks at startup; Codex sessions may also need `/hooks` review/trust after the hook definition changes; Cursor reloads `hooks.json` automatically but in-flight `cursor-agent` sessions should be restarted to pick up new hooks.
 
 ## Where state and logs live
 
@@ -52,6 +52,11 @@ Factory and Codex `Stop` hooks are turn-scoped, not necessarily process/session 
 | `PostToolUse` | → running | Factory `AskUser` answered, Codex user-input picker answered, or Codex completed a tool after approval |
 | `Stop` | → finished | "current turn done, idle" — **not** session-end |
 | `SessionEnd` | → finished | actually done |
+| Cursor `sessionStart` / `beforeSubmitPrompt` | → running | camelCase; prompt captured from `prompt` (or `text`) |
+| Cursor `beforeShellExecution` / `beforeMCPExecution` | → waitingForInput | approval gate — the only hook-observable "needs you" moment in `cursor-agent` |
+| Cursor `afterShellExecution` / `afterMCPExecution` / `afterFileEdit` / `postToolUse` | → running | command/tool ran, agent working again |
+| Cursor `stop` | → finished | turn-scoped; `status` ∈ completed/aborted/error drives the row text |
+| Cursor `sessionEnd` | → finished | actually done |
 
 The store keeps the literal `.finished` value across `Stop`s; the popover treats `.finished` as `DONE` and the next `UserPromptSubmit` flips it back to `.running`.
 
@@ -73,7 +78,9 @@ The store keeps the literal `.finished` value across `Stop`s; the popover treats
 - Factory: registers bare-event hooks (`SessionStart`, `SessionEnd`, `Notification`, `Stop`, `UserPromptSubmit`) and matcher hooks (`PreToolUse`/`PostToolUse` with `matcher: "AskUser"`)
 - Codex: registers `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse` with `matcher: "request_user_input"`, `PostToolUse`, and `Stop`
 
-If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook` jq function call lists so uninstall stays clean. Use `install_matcher_hook` when the event requires a matcher.
+`make install-cursor-hooks` is **separate** and intentionally not part of `install-hooks`. `~/.cursor/hooks.json` is shared with the Cursor IDE, so bundling it into the default target would make every IDE agent session spawn an (unfocusable, terminal-less) row. The Cursor merge uses a **different shape** from Factory/Codex: Cursor hook definitions are flat (`{command, timeout}`, no nested `hooks` array), event names are camelCase, and the file carries a top-level `version: 1`. It registers `sessionStart`, `beforeSubmitPrompt`, `beforeShellExecution`, `afterShellExecution`, `beforeMCPExecution`, `afterMCPExecution`, `afterFileEdit`, `postToolUse`, `stop`, and `sessionEnd`. Note that `cursor-agent` only fires a subset in interactive mode (and `beforeSubmitPrompt`/`stop` don't fire in headless `-p`), but registering the full set is harmless.
+
+If you add a new hook, mirror it in **both** the `install_hook` and `remove_hook` jq call lists for that CLI so uninstall stays clean. Use `install_matcher_hook` (Factory) when the event requires a matcher; Cursor matchers, when needed, are plain strings on the flat definition.
 
 ## Things that are not bugs
 

@@ -2,8 +2,10 @@ REPO       := $(shell pwd)
 COMMON_HOOK := $(REPO)/hooks/agent-event-bridge.sh
 FACTORY_HOOK := $(REPO)/hooks/factory-event-bridge.sh
 CODEX_HOOK := $(REPO)/hooks/codex-event-bridge.sh
+CURSOR_HOOK := $(REPO)/hooks/cursor-event-bridge.sh
 FACTORY_SETTINGS := $(HOME)/.factory/settings.json
 CODEX_SETTINGS := $(HOME)/.codex/hooks.json
+CURSOR_SETTINGS := $(HOME)/.cursor/hooks.json
 APP_NAME   := AgentMenuBar
 BIN_DEBUG  := $(REPO)/.build/debug/AgentMenuBar
 BIN_REL    := $(REPO)/.build/release/AgentMenuBar
@@ -12,7 +14,7 @@ APP_PLIST  := $(REPO)/Resources/Info.plist
 INSTALL_DIR := /Applications
 INSTALLED_APP := $(INSTALL_DIR)/$(APP_NAME).app
 
-.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks install-factory-hooks uninstall-factory-hooks install-codex-hooks uninstall-codex-hooks logs tail-events test-event clean help
+.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks install-factory-hooks uninstall-factory-hooks install-codex-hooks uninstall-codex-hooks install-cursor-hooks uninstall-cursor-hooks logs tail-events test-event clean help
 
 help:
 	@echo "Targets:"
@@ -29,6 +31,7 @@ help:
 	@echo "  uninstall-hooks    remove Factory + Codex bridges"
 	@echo "  install-factory-hooks / uninstall-factory-hooks"
 	@echo "  install-codex-hooks / uninstall-codex-hooks"
+	@echo "  install-cursor-hooks / uninstall-cursor-hooks  (cursor-agent CLI; shares ~/.cursor/hooks.json with the IDE)"
 	@echo "  test-event         send a fake Notification event to the running app"
 	@echo "  tail-events        tail the debug event log"
 	@echo "  clean              swift package clean"
@@ -203,6 +206,62 @@ uninstall-codex-hooks:
 	' "$(CODEX_SETTINGS)" > "$(CODEX_SETTINGS).new"
 	@mv "$(CODEX_SETTINGS).new" "$(CODEX_SETTINGS)"
 	@echo "Codex hooks removed. Backup: $(CODEX_SETTINGS).bak.<ts>"
+
+install-cursor-hooks:
+	@chmod +x "$(COMMON_HOOK)" "$(CURSOR_HOOK)"
+	@mkdir -p "$(dir $(CURSOR_SETTINGS))"
+	@if [ ! -f "$(CURSOR_SETTINGS)" ]; then echo '{"version":1}' > "$(CURSOR_SETTINGS)"; fi
+	@cp "$(CURSOR_SETTINGS)" "$(CURSOR_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CURSOR_HOOK)" '\
+	  .version = (.version // 1) \
+	  | def install_hook($$e): \
+	      .hooks = (.hooks // {}) | \
+	      .hooks[$$e] = ( \
+	        ((.hooks[$$e] // []) | map(select(.command != $$cmd))) \
+	        + [{command: $$cmd, timeout: 5}] \
+	      ); \
+	  install_hook("sessionStart") \
+	  | install_hook("beforeSubmitPrompt") \
+	  | install_hook("beforeShellExecution") \
+	  | install_hook("afterShellExecution") \
+	  | install_hook("beforeMCPExecution") \
+	  | install_hook("afterMCPExecution") \
+	  | install_hook("afterFileEdit") \
+	  | install_hook("postToolUse") \
+	  | install_hook("stop") \
+	  | install_hook("sessionEnd") \
+	' "$(CURSOR_SETTINGS)" > "$(CURSOR_SETTINGS).new"
+	@mv "$(CURSOR_SETTINGS).new" "$(CURSOR_SETTINGS)"
+	@echo "Cursor hooks installed. Backup: $(CURSOR_SETTINGS).bak.<ts>"
+	@echo "Bridge:   $(CURSOR_HOOK)"
+	@echo "Note: ~/.cursor/hooks.json is shared with the Cursor IDE, so these hooks fire for IDE agent sessions too."
+	@echo "Cursor watches hooks.json and reloads it automatically; restart any in-flight cursor-agent session to pick them up."
+
+uninstall-cursor-hooks:
+	@if [ ! -f "$(CURSOR_SETTINGS)" ]; then \
+	  echo "Nothing to do — $(CURSOR_SETTINGS) not present."; exit 0; \
+	fi
+	@cp "$(CURSOR_SETTINGS)" "$(CURSOR_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CURSOR_HOOK)" '\
+	  def remove_hook($$e): \
+	    if (.hooks // {}) | has($$e) | not then . else \
+	      .hooks[$$e] = ((.hooks[$$e] // []) | map(select(.command != $$cmd))) \
+	      | if (.hooks[$$e] | length) == 0 then del(.hooks[$$e]) else . end \
+	    end; \
+	  remove_hook("sessionStart") \
+	  | remove_hook("beforeSubmitPrompt") \
+	  | remove_hook("beforeShellExecution") \
+	  | remove_hook("afterShellExecution") \
+	  | remove_hook("beforeMCPExecution") \
+	  | remove_hook("afterMCPExecution") \
+	  | remove_hook("afterFileEdit") \
+	  | remove_hook("postToolUse") \
+	  | remove_hook("stop") \
+	  | remove_hook("sessionEnd") \
+	  | if (.hooks // {}) == {} then del(.hooks) else . end \
+	' "$(CURSOR_SETTINGS)" > "$(CURSOR_SETTINGS).new"
+	@mv "$(CURSOR_SETTINGS).new" "$(CURSOR_SETTINGS)"
+	@echo "Cursor hooks removed. Backup: $(CURSOR_SETTINGS).bak.<ts>"
 
 test-event:
 	@$(REPO)/scripts/send-test-event.sh

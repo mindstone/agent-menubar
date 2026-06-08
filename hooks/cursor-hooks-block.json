@@ -1,0 +1,36 @@
+{
+  "_comment": "Cursor CLI (cursor-agent) example. Merge the 'version' and 'hooks' keys into ~/.cursor/hooks.json (user-global) or .cursor/hooks.json (per-project). The 'make install-cursor-hooks' target does this idempotently. Note: ~/.cursor/hooks.json is shared with the Cursor IDE, so these hooks also fire for IDE agent sessions.",
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "beforeShellExecution": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "afterShellExecution": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "beforeMCPExecution": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "afterMCPExecution": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "afterFileEdit": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "postToolUse": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "stop": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ],
+    "sessionEnd": [
+      { "command": "$AGENT_MENUBAR_CURSOR_HOOK", "timeout": 5 }
+    ]
+  }
+}

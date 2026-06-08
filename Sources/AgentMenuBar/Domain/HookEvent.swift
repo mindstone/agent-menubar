@@ -14,6 +14,7 @@ struct HookEvent: Decodable {
     let lastAssistantMessage: String?  // Codex Stop.last_assistant_message
     let permissionMode: String?        // Codex permission_mode
     let turnId: String?                // Codex turn_id
+    let status: String?                // Cursor stop.status: completed | aborted | error
     let itermSessionId: String?       // injected by bridge from $ITERM_SESSION_ID
     let ghosttySurfaceId: String?     // injected by bridge from $GHOSTTY_SURFACE_ID
     let termProgram: String?          // injected by bridge
@@ -31,6 +32,7 @@ struct HookEvent: Decodable {
         case lastAssistantMessage = "last_assistant_message"
         case permissionMode   = "permission_mode"
         case turnId           = "turn_id"
+        case status           = "status"
         case itermSessionId   = "iterm_session_id"
         case ghosttySurfaceId = "ghostty_surface_id"
         case termProgram      = "term_program"
@@ -50,6 +52,7 @@ struct HookEvent: Decodable {
         lastAssistantMessage = try c.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode)
         turnId = try c.decodeIfPresent(String.self, forKey: .turnId)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
         itermSessionId = try c.decodeIfPresent(String.self, forKey: .itermSessionId)
         ghosttySurfaceId = try c.decodeIfPresent(String.self, forKey: .ghosttySurfaceId)
         termProgram = try c.decodeIfPresent(String.self, forKey: .termProgram)

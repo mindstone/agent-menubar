@@ -9,6 +9,7 @@ enum AgentEventAdapters {
         switch kind {
         case .factoryDroid: return FactoryDroidEventAdapter()
         case .codex:        return CodexEventAdapter()
+        case .cursor:       return CursorAgentEventAdapter()
         case .unknown:      return GenericAgentEventAdapter()
         }
     }
@@ -131,6 +132,101 @@ struct CodexEventAdapter: AgentEventAdapter {
                 session.lastEvent = tail
             } else {
                 session.lastEvent = "Finished turn"
+            }
+
+        default:
+            break
+        }
+    }
+}
+
+/// Cursor CLI (`cursor-agent`). Event names are camelCase, distinct from the
+/// PascalCase set Factory Droid and Codex use. The CLI only fires a subset of
+/// Cursor's documented hooks in interactive mode: `sessionStart`,
+/// `beforeSubmitPrompt`, `beforeShellExecution`, `afterShellExecution`,
+/// `afterFileEdit`, `postToolUse`, `stop`, and `sessionEnd`.
+///
+/// Cursor has no dedicated notification/permission-request event, and its
+/// interactive question picker (`AskQuestion`) does not fire tool hooks, so the
+/// only hook-observable "needs you" moment is a command/MCP approval gate
+/// (`beforeShellExecution` / `beforeMCPExecution`). We treat those as
+/// waiting-for-input and flip back to running once the command runs or any
+/// tool completes. When the CLI auto-runs commands this shows as a brief
+/// orange flicker rather than a sustained wait.
+struct CursorAgentEventAdapter: AgentEventAdapter {
+    func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
+        switch event.hookEventName {
+        case "sessionStart":
+            session.status = .running
+            session.startedAt = min(session.startedAt, now)
+            session.finishedAt = nil
+            session.attentionRaisedAt = nil
+            if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
+                session.lastEvent = "Session started"
+            }
+
+        case "beforeSubmitPrompt":
+            applyPrompt(event.prompt, to: &session)
+
+        case "beforeShellExecution":
+            session.status = .waitingForInput
+            session.finishedAt = nil
+            session.attentionRaisedAt = now
+            if let cmd = event.message?.firstMeaningfulLine(maxLength: 120) {
+                session.lastEvent = "Wants to run: \(cmd)"
+            } else {
+                session.lastEvent = "Cursor wants to run a command"
+            }
+
+        case "beforeMCPExecution":
+            session.status = .waitingForInput
+            session.finishedAt = nil
+            session.attentionRaisedAt = now
+            session.lastEvent = event.message?.nilIfEmpty ?? "Cursor wants to use a tool"
+
+        case "afterShellExecution", "afterMCPExecution":
+            session.status = .running
+            session.finishedAt = nil
+            session.attentionRaisedAt = nil
+            session.lastEvent = "Working…"
+
+        case "afterFileEdit":
+            session.status = .running
+            session.finishedAt = nil
+            session.attentionRaisedAt = nil
+            session.lastEvent = "Editing files…"
+
+        case "postToolUse":
+            if session.status == .waitingForInput {
+                session.status = .running
+                session.finishedAt = nil
+                session.attentionRaisedAt = nil
+                session.lastEvent = "Working…"
+            }
+
+        case "stop":
+            session.status = .finished
+            session.finishedAt = now
+            session.attentionRaisedAt = nil
+            switch event.status {
+            case "error":
+                session.lastEvent = "Stopped with an error"
+            case "aborted":
+                session.lastEvent = "Cancelled"
+            default:
+                if let t = session.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
+                    session.lastEvent = tail
+                } else {
+                    session.lastEvent = "Finished turn"
+                }
+            }
+
+        case "sessionEnd":
+            session.status = .finished
+            session.finishedAt = now
+            session.attentionRaisedAt = nil
+            if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
+                session.lastEvent = "Session ended"
             }
 
         default:
