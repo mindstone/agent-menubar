@@ -29,10 +29,7 @@ final class SessionStore: ObservableObject {
             if let id = s.ghosttyTerminalId, !id.isEmpty {
                 guard aliveGhosttyTabs[id] != nil else { continue }
                 let key = "ghostty:\(id)"
-                if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
-                    continue
-                }
-                latestPerTab[key] = s
+                latestPerTab[key] = latestPerTab[key].map { Self.tabRepresentative($0, s) } ?? s
             } else if (s.ghosttySurfaceId ?? "").isEmpty == false {
                 // First-sight Ghostty session whose AppleScript UUID hasn't
                 // been resolved yet. Show it optimistically so the user
@@ -44,10 +41,7 @@ final class SessionStore: ObservableObject {
                 let uuid = ITermFocuser.uuidFromRaw(raw)
                 guard aliveItermTabs[uuid] != nil else { continue }
                 let key = "iterm:\(uuid)"
-                if let existing = latestPerTab[key], existing.lastEventAt >= s.lastEventAt {
-                    continue
-                }
-                latestPerTab[key] = s
+                latestPerTab[key] = latestPerTab[key].map { Self.tabRepresentative($0, s) } ?? s
             } else {
                 orphans.append(s)
             }
@@ -102,8 +96,10 @@ final class SessionStore: ObservableObject {
                     setChanged = true
                 }
                 let titlesChanged = self.syncTabTitlesIntoSessions()
-                if setChanged { self.recomputeBarState() }
-                if titlesChanged { self.save() }
+                let aged = self.ageStaleSessions()
+                if aged { self.sortSessions() }
+                if setChanged || aged { self.recomputeBarState() }
+                if titlesChanged || aged { self.save() }
             }
         }
     }
@@ -360,8 +356,73 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Periodic sweep (driven by the inventory timer) that ages out running /
+    /// waiting sessions which have gone silent. This is the continuous
+    /// counterpart to `reconcile`, which only runs once at launch — without it,
+    /// a dropped `Stop`/`SessionEnd` (app offline, socket timeout, missing `jq`,
+    /// crashed agent) would leave a session lit forever. Conservative on
+    /// purpose: a session whose terminal tab is still open is never aged (it may
+    /// be legitimately mid-turn with no intervening hooks — a long build or model
+    /// call). Returns `true` if anything changed.
+    @MainActor
+    private func ageStaleSessions(now: Date = Date()) -> Bool {
+        var changed = false
+        for i in sessions.indices {
+            let s = sessions[i]
+            let alive = isTabAlive(s)
+            let bound = hasTerminalBinding(s)
+            guard Self.shouldStale(s, tabAlive: alive, hasBinding: bound, idleTTL: staleAfterIdle, now: now) else { continue }
+            sessions[i].status = .stale
+            if sessions[i].finishedAt == nil { sessions[i].finishedAt = now }
+            changed = true
+        }
+        return changed
+    }
+
+    @MainActor
+    private func hasTerminalBinding(_ s: DroidSession) -> Bool {
+        if let id = s.ghosttyTerminalId, !id.isEmpty { return true }
+        if (s.ghosttySurfaceId ?? "").isEmpty == false { return true }
+        if let raw = s.itermSessionId, !raw.isEmpty { return true }
+        return false
+    }
+
+    @MainActor
+    private func isTabAlive(_ s: DroidSession) -> Bool {
+        if let id = s.ghosttyTerminalId, !id.isEmpty { return aliveGhosttyTabs[id] != nil }
+        // Unresolved Ghostty surface (AppleScript UUID not bound yet): assume
+        // alive so we don't age a brand-new session before its resolve lands.
+        if (s.ghosttySurfaceId ?? "").isEmpty == false { return true }
+        if let raw = s.itermSessionId, !raw.isEmpty {
+            return aliveItermTabs[ITermFocuser.uuidFromRaw(raw)] != nil
+        }
+        return false
+    }
+
     private func sortSessions() {
         sessions.sort(by: Self.sessionSort)
+    }
+
+    /// Pick the session that should represent a terminal tab when several share
+    /// it. With the Claude-as-driver harness, a single tab can host the driver
+    /// plus the sub-agent CLIs it shells out to (`codex`, `cursor`, nested
+    /// `claude`), each a distinct `session_id` on the same `iterm`/`ghostty` id.
+    /// Choosing by recency alone lets a just-finished sub-agent's `Stop` mask a
+    /// still-running driver (row flips to DONE mid-task) or vice-versa. Picking
+    /// by `sessionSort` (status first, then recency) keeps the most important
+    /// state visible: a waiting sub-agent surfaces, an active driver is never
+    /// hidden by a finished sibling, and `.stale` rows never win over live ones.
+    static func tabRepresentative(_ a: DroidSession, _ b: DroidSession) -> DroidSession {
+        sessionSort(a, b) ? a : b
+    }
+
+    /// Pure decision for `ageStaleSessions`. Ages an active session to `.stale`
+    /// only when it has been silent past `idleTTL` *and* its terminal tab is
+    /// gone (or it never had a resolvable binding). A live tab is left alone.
+    static func shouldStale(_ s: DroidSession, tabAlive: Bool, hasBinding: Bool, idleTTL: TimeInterval, now: Date) -> Bool {
+        guard s.status == .running || s.status == .waitingForInput else { return false }
+        guard now.timeIntervalSince(s.lastEventAt) > idleTTL else { return false }
+        return hasBinding ? !tabAlive : true
     }
 
     private static func sessionSort(_ a: DroidSession, _ b: DroidSession) -> Bool {

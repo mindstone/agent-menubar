@@ -12,6 +12,7 @@ struct HookEvent: Decodable {
     let source: String?               // Codex SessionStart.source
     let toolName: String?             // PreToolUse / PostToolUse
     let lastAssistantMessage: String?  // Codex Stop.last_assistant_message
+    let notificationType: String?      // Claude Code Notification.notification_type (permission_prompt|idle_prompt|elicitation_dialog…)
     let permissionMode: String?        // Codex permission_mode
     let turnId: String?                // Codex turn_id
     let status: String?                // Cursor stop.status: completed | aborted | error
@@ -30,6 +31,7 @@ struct HookEvent: Decodable {
         case source           = "source"
         case toolName         = "tool_name"
         case lastAssistantMessage = "last_assistant_message"
+        case notificationType = "notification_type"
         case permissionMode   = "permission_mode"
         case turnId           = "turn_id"
         case status           = "status"
@@ -50,6 +52,7 @@ struct HookEvent: Decodable {
         source = try c.decodeIfPresent(String.self, forKey: .source)
         toolName = try c.decodeIfPresent(String.self, forKey: .toolName)
         lastAssistantMessage = try c.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+        notificationType = try c.decodeIfPresent(String.self, forKey: .notificationType)
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode)
         turnId = try c.decodeIfPresent(String.self, forKey: .turnId)
         status = try c.decodeIfPresent(String.self, forKey: .status)

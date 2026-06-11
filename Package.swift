@@ -14,6 +14,11 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
+        ),
+        .testTarget(
+            name: "AgentMenuBarTests",
+            dependencies: ["AgentMenuBar"],
+            path: "Tests/AgentMenuBarTests"
         )
     ]
 )

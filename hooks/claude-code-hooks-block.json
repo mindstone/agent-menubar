@@ -1,0 +1,26 @@
+{
+  "_comment": "Claude Code example. Merge the 'hooks' object into ~/.claude/settings.json (user-global) or .claude/settings.json (per-project). The 'make install-claude-hooks' target does this idempotently and preserves any other settings keys. Notification is scoped to the genuine needs-you types (permission_prompt|elicitation_dialog) so housekeeping notifications (auth_success) and the post-turn idle nudge (idle_prompt) don't flip the row to waiting.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "Notification": [
+      { "matcher": "permission_prompt|elicitation_dialog", "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "PostToolUse": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ]
+  }
+}

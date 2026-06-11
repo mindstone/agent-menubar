@@ -10,6 +10,7 @@ enum AgentEventAdapters {
         case .factoryDroid: return FactoryDroidEventAdapter()
         case .codex:        return CodexEventAdapter()
         case .cursor:       return CursorAgentEventAdapter()
+        case .claudeCode:   return ClaudeCodeEventAdapter()
         case .unknown:      return GenericAgentEventAdapter()
         }
     }
@@ -222,6 +223,94 @@ struct CursorAgentEventAdapter: AgentEventAdapter {
             }
 
         case "sessionEnd":
+            session.status = .finished
+            session.finishedAt = now
+            session.attentionRaisedAt = nil
+            if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
+                session.lastEvent = "Session ended"
+            }
+
+        default:
+            break
+        }
+    }
+}
+
+/// Anthropic Claude Code (`claude`). Hook event names are PascalCase and its
+/// stdin payload already uses the field names HookEvent decodes
+/// (`session_id`, `cwd`, `transcript_path`, `message`, `prompt`, `source`,
+/// `tool_name`), so its bridge wrapper needs no normalization.
+///
+/// Claude Code is the cleanest mapping of the supported CLIs: it exposes both
+/// `Notification` (permission prompts) and a dedicated `PermissionRequest`
+/// event for the waiting signal, `PostToolUse` for the return to running, and a
+/// turn-scoped `Stop`. We register Notification only for the genuine
+/// needs-you types (`permission_prompt`/`elicitation_dialog`) so housekeeping
+/// notifications like `auth_success` don't flip the row orange.
+///
+/// `idle_prompt` is deliberately *not* a waiting signal. Claude Code fires it
+/// ~60s after `Stop` when the user hasn't replied yet — i.e. the turn is
+/// already finished and rendered DONE. Treating "still idle" as fresh
+/// waiting-for-input would repaint every completed turn orange (the attention
+/// "question" state) with no actual question pending. We guard on
+/// `notification_type` here in addition to scoping the registered matcher, so
+/// a stale `~/.claude/settings.json` that still lists `idle_prompt` can't
+/// reintroduce the false positive.
+struct ClaudeCodeEventAdapter: AgentEventAdapter {
+    func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
+        switch event.hookEventName {
+        case "SessionStart":
+            session.status = .running
+            session.startedAt = min(session.startedAt, now)
+            session.finishedAt = nil
+            session.attentionRaisedAt = nil
+            if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
+                session.lastEvent = event.sourceDescription ?? "Session started"
+            }
+
+        case "UserPromptSubmit":
+            applyPrompt(event.prompt, to: &session)
+
+        case "Notification":
+            // Idle nudge after a finished turn — not a real prompt. Leave the
+            // resting state (DONE/running) untouched; see the type note above.
+            if event.notificationType == "idle_prompt" { break }
+            session.status = .waitingForInput
+            session.finishedAt = nil
+            session.attentionRaisedAt = now
+            session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
+
+        case "PermissionRequest":
+            session.status = .waitingForInput
+            session.finishedAt = nil
+            session.attentionRaisedAt = now
+            if let message = event.message?.nilIfEmpty {
+                session.lastEvent = message
+            } else if let tool = event.toolName?.nilIfEmpty {
+                session.lastEvent = "Claude needs permission to use \(tool)"
+            } else {
+                session.lastEvent = "Claude needs your permission"
+            }
+
+        case "PostToolUse":
+            if session.status == .waitingForInput {
+                session.status = .running
+                session.finishedAt = nil
+                session.attentionRaisedAt = nil
+                session.lastEvent = "Working…"
+            }
+
+        case "Stop":
+            session.status = .finished
+            session.finishedAt = now
+            session.attentionRaisedAt = nil
+            if let t = session.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
+                session.lastEvent = tail
+            } else {
+                session.lastEvent = "Finished turn"
+            }
+
+        case "SessionEnd":
             session.status = .finished
             session.finishedAt = now
             session.attentionRaisedAt = nil

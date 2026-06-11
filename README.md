@@ -1,6 +1,6 @@
 # AgentMenuBar
 
-A macOS menu-bar app that tracks running AI-agent sessions across terminal tabs, surfaces the ones waiting for your input, and one-click-focuses the exact tab. Factory Droid, Codex CLI, and Cursor CLI (`cursor-agent`) are supported through thin hook bridges; other CLIs can plug in by normalising their hook payloads into the same socket event shape.
+A macOS menu-bar app that tracks running AI-agent sessions across terminal tabs, surfaces the ones waiting for your input, and one-click-focuses the exact tab. Factory Droid, Codex CLI, Cursor CLI (`cursor-agent`), and Claude Code are supported through thin hook bridges; other CLIs can plug in by normalising their hook payloads into the same socket event shape.
 
 ![AgentMenuBar popover showing running, waiting, and finished agent sessions](docs/popover.png)
 
@@ -20,6 +20,7 @@ AgentMenuBar is the dashboard we wanted: at a glance, how many agents are *runni
    - Factory Droid: `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, plus `PreToolUse`/`PostToolUse` for interactive `AskUser` prompts.
    - Codex CLI: `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse(request_user_input)`, `PostToolUse`, and turn-scoped `Stop`.
    - Cursor CLI (`cursor-agent`): `sessionStart`, `beforeSubmitPrompt`, `beforeShellExecution`/`beforeMCPExecution`, `afterShellExecution`/`afterMCPExecution`, `afterFileEdit`, `postToolUse`, turn-scoped `stop`, and `sessionEnd`.
+   - Claude Code: `SessionStart`, `UserPromptSubmit`, `Notification` (`permission_prompt`/`elicitation_dialog` only), `PermissionRequest`, `PostToolUse`, turn-scoped `Stop`, and `SessionEnd`.
 2. Capturing each session's `ITERM_SESSION_ID` at start.
 3. Showing one row per active agent in a popover, with click-to-focus that selects the exact iTerm window + tab.
 
@@ -32,6 +33,7 @@ No accessibility automation, no terminal scraping. Hooks + iTerm's own session U
 | OpenAI Codex CLI | `~/.codex/hooks.json` | `PermissionRequest`, `Notification`, and `PreToolUse(request_user_input)` | turn-scoped `Stop` | Works after reviewing/trusting the hook in `/hooks`. Tested with real Codex `UserPromptSubmit`/`PostToolUse` hooks and manual lifecycle events. |
 | Factory Droid | `~/.factory/settings.json` | `Notification` and `PreToolUse` matcher `AskUser` | turn-scoped `Stop` or `SessionEnd` | Existing Droid sessions need restart after hook changes because Droid snapshots hooks at startup. |
 | Cursor CLI (`cursor-agent`) | `~/.cursor/hooks.json` (shared with the Cursor IDE) | `beforeShellExecution` / `beforeMCPExecution` (command/MCP approval gate) | turn-scoped `stop` or `sessionEnd` | Install via `make install-cursor-hooks` (kept out of the default `install-hooks` because the file is shared with the IDE). Cursor has no notification/permission-request event and its `AskQuestion` picker doesn't fire tool hooks, so a clarifying question isn't observable — see Known limits. `beforeSubmitPrompt`/`stop` only fire in interactive mode, not headless `-p`. |
+| Claude Code | `~/.claude/settings.json` | `PermissionRequest` and `Notification` (`permission_prompt`/`elicitation_dialog`) | turn-scoped `Stop` or `SessionEnd` | Included in the default `install-hooks`. The jq merge only touches the `hooks` key, so other settings (model, permissions, …) are preserved. `idle_prompt` notifications (the ~60s post-turn nudge) are intentionally ignored so a finished turn doesn't get repainted as waiting. Restart in-flight sessions and use `/hooks` to verify. |
 
 Both CLIs use the same socket bridge and persisted session store. CLI-specific behavior lives in `AgentEventAdapter`, so adding another agent should mean adding a thin hook wrapper plus one adapter instead of changing the UI or store shape.
 
@@ -39,12 +41,12 @@ For the full process, see [Adding a New CLI Agent](docs/adding-new-cli.md).
 
 ## Status
 
-**v1.** End-to-end pipeline is implemented and smoke-tested for Factory Droid, Codex CLI, and Cursor CLI (build → install → hook event → socket → persisted row → popover state). Build is clean. The Cursor lifecycle was verified through the bridge into the running app (`sessionStart → beforeSubmitPrompt → beforeShellExecution → afterShellExecution → stop` mapping to running → running → waiting → running → finished).
+**v1.** End-to-end pipeline is implemented and smoke-tested for Factory Droid, Codex CLI, Cursor CLI, and Claude Code (build → install → hook event → socket → persisted row → popover state). Build is clean. The Cursor and Claude Code lifecycles were verified through the bridge into the running app — Cursor (`sessionStart → beforeSubmitPrompt → beforeShellExecution → afterShellExecution → stop`) and Claude Code (`SessionStart → UserPromptSubmit → PermissionRequest → PostToolUse → Stop → Notification(idle_prompt)`) mapping to running → running → waiting → running → finished → **finished** (the trailing idle nudge is ignored, not treated as a fresh question). State transitions are also covered by unit tests in `Tests/`.
 
 ## Architecture
 
 ```
- Agent hook  ──stdin JSON──▶  hooks/{factory,codex,cursor}-event-bridge.sh
+ Agent hook  ──stdin JSON──▶  hooks/{factory,codex,cursor,claude-code}-event-bridge.sh
                                          │
                                          │ tags agent_kind and augments with
                                          │ $ITERM_SESSION_ID, $TERM_PROGRAM, $PPID
@@ -72,7 +74,7 @@ make install-hooks   # additive merge into ~/.factory/settings.json and ~/.codex
 make run             # launches the menu bar app (no Dock icon)
 ```
 
-Open a supported terminal tab and run `codex` or `droid`. You should see a row appear in the menu bar popover. When the agent asks for input or approval, the row moves to waiting; clicking the row jumps to that exact terminal tab.
+Open a supported terminal tab and run `codex`, `droid`, or `claude`. You should see a row appear in the menu bar popover. When the agent asks for input or approval, the row moves to waiting; clicking the row jumps to that exact terminal tab. (For Cursor CLI, run `make install-cursor-hooks` separately first — see Supported CLIs.)
 
 For Codex CLI, open `/hooks` once after installing to review and trust the new hook definition. Codex loads hooks from `~/.codex/hooks.json`; Factory Droid loads hooks from `~/.factory/settings.json`.
 
@@ -104,7 +106,7 @@ You'll see four notifications and one row in the popover, ending in "Finished ta
 | State | Colour | When |
 |---|---|---|
 | running | blue | After `SessionStart`/`sessionStart`, a prompt submit, or any tool/file/shell activity |
-| waitingForInput | orange | On Factory `Notification`, Factory `AskUser`, Codex `PermissionRequest`, Codex `Notification`, Codex Plan-mode `request_user_input`, or Cursor `beforeShellExecution`/`beforeMCPExecution` |
+| waitingForInput | orange | On Factory `Notification`, Factory `AskUser`, Codex `PermissionRequest`, Codex `Notification`, Codex Plan-mode `request_user_input`, Cursor `beforeShellExecution`/`beforeMCPExecution`, or Claude Code `PermissionRequest`/`Notification(permission_prompt\|elicitation_dialog)`. Claude Code `idle_prompt` (post-turn idle nudge) is **not** a waiting signal — a finished turn stays DONE. |
 | finished | green | After `Stop`/`stop` or `SessionEnd`/`sessionEnd` |
 | stale | grey | A previously-running session whose process disappeared |
 
@@ -114,7 +116,7 @@ The menu bar icon is grey when nothing's tracked, shows a count when sessions ar
 
 - macOS only (built for macOS 13+; tested on 26).
 - iTerm only — sessions started outside iTerm appear in the list but can't be focused.
-- Factory Droid, Codex CLI, and Cursor CLI only. Other CLIs need a hook wrapper and an `AgentEventAdapter`.
+- Factory Droid, Codex CLI, Cursor CLI, and Claude Code only. Other CLIs need a hook wrapper and an `AgentEventAdapter`.
 - Cursor CLI waiting-state is approximate. `cursor-agent` exposes no notification/permission-request event, and its interactive `AskQuestion` picker doesn't fire tool hooks, so the only hook-observable "needs you" moment is a shell/MCP approval gate (`beforeShellExecution`/`beforeMCPExecution`). With auto-run enabled this shows as a brief orange flicker rather than a sustained wait; a clarifying question won't turn the row orange at all. The `~/.cursor/hooks.json` file is shared with the Cursor IDE, so installing also tracks IDE agent sessions (which appear as unfocusable rows since they aren't bound to a terminal tab).
 - No accessibility / screen-scraping.
 - Notifications are emitted via `osascript display notification` (so they appear under "Script Editor" in the system notification source). This is deliberate — it avoids needing a signed bundle for `UNUserNotificationCenter`.
@@ -137,9 +139,11 @@ hooks/
   factory-event-bridge.sh             shell that Factory invokes
   codex-event-bridge.sh               shell that Codex invokes
   cursor-event-bridge.sh              shell that Cursor invokes (normalises conversation_id/workspace_roots)
+  claude-code-event-bridge.sh         shell that Claude Code invokes
   settings-hooks-block.json           Factory reference snippet
   codex-hooks-block.json              Codex reference snippet
   cursor-hooks-block.json             Cursor reference snippet
+  claude-code-hooks-block.json        Claude Code reference snippet
 scripts/
   send-test-event.sh                  fake-event harness for development
 Sources/AgentMenuBar/
@@ -163,10 +167,12 @@ Sources/AgentMenuBar/
 | `make run` | build + launch (debug) |
 | `make run-release` | build + launch (release) |
 | `make stop` | kill any running AgentMenuBar |
-| `make install-hooks` | additive jq merge into Factory and Codex hook settings, backup first |
+| `make install-hooks` | additive jq merge into Factory, Codex, and Claude Code hook settings, backup first |
 | `make uninstall-hooks` | inverse, prunes empty groups, backup first |
 | `make install-factory-hooks` | additive jq merge into `~/.factory/settings.json`, backup first |
 | `make install-codex-hooks` | additive jq merge into `~/.codex/hooks.json`, backup first |
+| `make install-claude-hooks` | additive jq merge into `~/.claude/settings.json` (preserves other keys), backup first |
+| `make uninstall-claude-hooks` | inverse for Claude Code, prunes empty groups, backup first |
 | `make install-cursor-hooks` | additive jq merge into `~/.cursor/hooks.json` (shared with the IDE), backup first |
 | `make uninstall-cursor-hooks` | inverse for Cursor, prunes empty groups, backup first |
 | `make test-event` | send the demo event sequence to the running app |
@@ -178,7 +184,7 @@ Sources/AgentMenuBar/
 - Proper `.app` bundle for Login Items and signed `UNUserNotificationCenter` notifications.
 - "Snooze attention" / per-session mute.
 - Other terminals: Terminal.app, Warp, Ghostty (via per-terminal focuser adapters).
-- Generic agent providers (Claude Code, …) once their hook surfaces stabilise. Cursor CLI is supported as of this version; a dedicated waiting/permission event would let us drop the `beforeShellExecution` approximation.
+- More generic agent providers once their hook surfaces stabilise. Factory Droid, Codex CLI, Cursor CLI, and Claude Code are supported as of this version; for Cursor, a dedicated waiting/permission event would let us drop the `beforeShellExecution` approximation.
 
 ## License
 

@@ -3,9 +3,11 @@ COMMON_HOOK := $(REPO)/hooks/agent-event-bridge.sh
 FACTORY_HOOK := $(REPO)/hooks/factory-event-bridge.sh
 CODEX_HOOK := $(REPO)/hooks/codex-event-bridge.sh
 CURSOR_HOOK := $(REPO)/hooks/cursor-event-bridge.sh
+CLAUDE_HOOK := $(REPO)/hooks/claude-code-event-bridge.sh
 FACTORY_SETTINGS := $(HOME)/.factory/settings.json
 CODEX_SETTINGS := $(HOME)/.codex/hooks.json
 CURSOR_SETTINGS := $(HOME)/.cursor/hooks.json
+CLAUDE_SETTINGS := $(HOME)/.claude/settings.json
 APP_NAME   := AgentMenuBar
 BIN_DEBUG  := $(REPO)/.build/debug/AgentMenuBar
 BIN_REL    := $(REPO)/.build/release/AgentMenuBar
@@ -14,7 +16,7 @@ APP_PLIST  := $(REPO)/Resources/Info.plist
 INSTALL_DIR := /Applications
 INSTALLED_APP := $(INSTALL_DIR)/$(APP_NAME).app
 
-.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks install-factory-hooks uninstall-factory-hooks install-codex-hooks uninstall-codex-hooks install-cursor-hooks uninstall-cursor-hooks logs tail-events test-event clean help
+.PHONY: build run release run-release bundle run-bundle stop install uninstall install-hooks uninstall-hooks install-factory-hooks uninstall-factory-hooks install-codex-hooks uninstall-codex-hooks install-cursor-hooks uninstall-cursor-hooks install-claude-hooks uninstall-claude-hooks logs tail-events test test-event clean help
 
 help:
 	@echo "Targets:"
@@ -27,11 +29,13 @@ help:
 	@echo "  install            copy $(APP_NAME).app into /Applications and launch it"
 	@echo "  uninstall          remove $(APP_NAME).app from /Applications"
 	@echo "  stop               kill any running $(APP_NAME) process"
-	@echo "  install-hooks      add Factory + Codex bridges (additive, idempotent)"
-	@echo "  uninstall-hooks    remove Factory + Codex bridges"
+	@echo "  install-hooks      add Factory + Codex + Claude Code bridges (additive, idempotent)"
+	@echo "  uninstall-hooks    remove Factory + Codex + Claude Code bridges"
 	@echo "  install-factory-hooks / uninstall-factory-hooks"
 	@echo "  install-codex-hooks / uninstall-codex-hooks"
+	@echo "  install-claude-hooks / uninstall-claude-hooks  (Claude Code CLI; ~/.claude/settings.json)"
 	@echo "  install-cursor-hooks / uninstall-cursor-hooks  (cursor-agent CLI; shares ~/.cursor/hooks.json with the IDE)"
+	@echo "  test               run the unit test suite (swift test)"
 	@echo "  test-event         send a fake Notification event to the running app"
 	@echo "  tail-events        tail the debug event log"
 	@echo "  clean              swift package clean"
@@ -85,9 +89,9 @@ uninstall: stop
 	@rm -rf "$(INSTALLED_APP)"
 	@echo "Removed $(INSTALLED_APP)"
 
-install-hooks: install-factory-hooks install-codex-hooks
+install-hooks: install-factory-hooks install-codex-hooks install-claude-hooks
 
-uninstall-hooks: uninstall-factory-hooks uninstall-codex-hooks
+uninstall-hooks: uninstall-factory-hooks uninstall-codex-hooks uninstall-claude-hooks
 
 install-factory-hooks:
 	@chmod +x "$(COMMON_HOOK)" "$(FACTORY_HOOK)"
@@ -262,6 +266,71 @@ uninstall-cursor-hooks:
 	' "$(CURSOR_SETTINGS)" > "$(CURSOR_SETTINGS).new"
 	@mv "$(CURSOR_SETTINGS).new" "$(CURSOR_SETTINGS)"
 	@echo "Cursor hooks removed. Backup: $(CURSOR_SETTINGS).bak.<ts>"
+
+install-claude-hooks:
+	@chmod +x "$(COMMON_HOOK)" "$(CLAUDE_HOOK)"
+	@mkdir -p "$(dir $(CLAUDE_SETTINGS))"
+	@if [ ! -f "$(CLAUDE_SETTINGS)" ]; then echo "{}" > "$(CLAUDE_SETTINGS)"; fi
+	@cp "$(CLAUDE_SETTINGS)" "$(CLAUDE_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CLAUDE_HOOK)" '\
+	  def install_hook($$e): \
+	    .hooks = (.hooks // {}) | \
+	    .hooks[$$e] = ( \
+	      ((.hooks[$$e] // []) \
+	        | map(.hooks |= map(select(.command != $$cmd))) \
+	        | map(select((.hooks // []) | length > 0))) \
+	      + [{hooks: [{type: "command", command: $$cmd, timeout: 5}]}] \
+	    ); \
+	  def install_matcher_hook($$e; $$m): \
+	    .hooks = (.hooks // {}) | \
+	    .hooks[$$e] = ( \
+	      ((.hooks[$$e] // []) \
+	        | map(.hooks |= map(select(.command != $$cmd))) \
+	        | map(select((.hooks // []) | length > 0))) \
+	      + [{matcher: $$m, hooks: [{type: "command", command: $$cmd, timeout: 5}]}] \
+	    ); \
+	  install_hook("SessionStart") \
+	  | install_hook("UserPromptSubmit") \
+	  | install_matcher_hook("Notification"; "permission_prompt|elicitation_dialog") \
+	  | install_hook("PermissionRequest") \
+	  | install_hook("PostToolUse") \
+	  | install_hook("Stop") \
+	  | install_hook("SessionEnd") \
+	' "$(CLAUDE_SETTINGS)" > "$(CLAUDE_SETTINGS).new"
+	@mv "$(CLAUDE_SETTINGS).new" "$(CLAUDE_SETTINGS)"
+	@echo "Claude Code hooks installed. Backup: $(CLAUDE_SETTINGS).bak.<ts>"
+	@echo "Bridge:   $(CLAUDE_HOOK)"
+	@echo "Restart any in-flight Claude Code session to pick up the new hooks (use /hooks to verify)."
+
+uninstall-claude-hooks:
+	@if [ ! -f "$(CLAUDE_SETTINGS)" ]; then \
+	  echo "Nothing to do — $(CLAUDE_SETTINGS) not present."; exit 0; \
+	fi
+	@cp "$(CLAUDE_SETTINGS)" "$(CLAUDE_SETTINGS).bak.$$(date +%s)"
+	@jq --arg cmd "$(CLAUDE_HOOK)" '\
+	  def remove_hook($$e): \
+	    if (.hooks // {}) | has($$e) | not then . else \
+	      .hooks[$$e] = ( \
+	        ((.hooks[$$e] // []) \
+	         | map(.hooks |= map(select(.command != $$cmd))) \
+	         | map(select((.hooks // []) | length > 0))) \
+	      ) \
+	      | if (.hooks[$$e] | length) == 0 then del(.hooks[$$e]) else . end \
+	    end; \
+	  remove_hook("SessionStart") \
+	  | remove_hook("UserPromptSubmit") \
+	  | remove_hook("Notification") \
+	  | remove_hook("PermissionRequest") \
+	  | remove_hook("PostToolUse") \
+	  | remove_hook("Stop") \
+	  | remove_hook("SessionEnd") \
+	  | if (.hooks // {}) == {} then del(.hooks) else . end \
+	' "$(CLAUDE_SETTINGS)" > "$(CLAUDE_SETTINGS).new"
+	@mv "$(CLAUDE_SETTINGS).new" "$(CLAUDE_SETTINGS)"
+	@echo "Claude Code hooks removed. Backup: $(CLAUDE_SETTINGS).bak.<ts>"
+
+test:
+	swift test
 
 test-event:
 	@$(REPO)/scripts/send-test-event.sh
