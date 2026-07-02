@@ -105,4 +105,127 @@ final class SessionStoreLogicTests: XCTestCase {
         let now = t0.addingTimeInterval(idleTTL * 10)
         XCTAssertFalse(SessionStore.shouldStale(s, tabAlive: false, hasBinding: false, idleTTL: idleTTL, now: now))
     }
+
+    // MARK: - hasLiveRelatedSubAgent (defer-finish gate, sub-agent half)
+
+    /// A driver that just ended its turn must not be considered done while a
+    /// sub-agent in the SAME tab is still running.
+    func testLiveSubAgentInSameTabBlocksFinish() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let sub = session(id: "sub", status: .running, lastEventAt: t1, iterm: "iterm-1")
+        XCTAssertTrue(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// A waiting sub-agent (blocked on a permission gate) also blocks.
+    func testWaitingSubAgentBlocksFinish() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let sub = session(id: "sub", status: .waitingForInput, lastEventAt: t1, iterm: "iterm-1")
+        XCTAssertTrue(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// Once the sub-agent is no longer live, the driver is free to finish.
+    func testFinishedSubAgentDoesNotBlock() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let sub = session(id: "sub", status: .finished, lastEventAt: t1, iterm: "iterm-1")
+        XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// A live agent in a DIFFERENT tab is unrelated — no cross-coupling.
+    func testLiveAgentInOtherTabDoesNotBlock() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let other = session(id: "other", status: .running, lastEventAt: t1, iterm: "iterm-2")
+        XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, other]))
+    }
+
+    /// A driver with no terminal binding relates to nothing (falls back to the
+    /// transcript signal + stale sweep, not handled here).
+    func testUnboundDriverHasNoRelations() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: nil)
+        let sub = session(id: "sub", status: .running, lastEventAt: t1, iterm: nil)
+        XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// The session never counts itself as its own blocker.
+    func testSessionDoesNotBlockItself() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver]))
+    }
+
+    // MARK: - tabKey
+
+    func testTabKeyPrefersResolvedGhosttyTerminal() {
+        let s = session(id: "s", status: .running, lastEventAt: t0,
+                        iterm: "iterm-1", ghosttySurface: "surf-9", ghosttyTerminal: "term-9")
+        XCTAssertEqual(SessionStore.tabKey(for: s), "ghostty:term-9")
+    }
+
+    func testTabKeyNilWhenUnbound() {
+        let s = session(id: "s", status: .running, lastEventAt: t0, iterm: nil)
+        XCTAssertNil(SessionStore.tabKey(for: s))
+    }
+
+    // MARK: - resumableClosed (the collapsed "Closed" recovery list)
+
+    private func closed(
+        id: String,
+        agent: AgentKind = .claudeCode,
+        cwd: String = "/repo",
+        status: SessionStatus = .finished,
+        at: Date
+    ) -> DroidSession {
+        DroidSession(
+            id: id,
+            agentKind: agent,
+            cwd: URL(fileURLWithPath: cwd),
+            repoName: nil,
+            itermSessionId: nil,
+            ghosttySurfaceId: nil,
+            status: status,
+            lastEvent: "x",
+            lastEventAt: at,
+            startedAt: at,
+            finishedAt: (status == .finished || status == .stale) ? at : nil,
+            transcriptPath: URL(fileURLWithPath: "/t/\(id).jsonl"),
+            attentionRaisedAt: nil
+        )
+    }
+
+    private let always: (DroidSession) -> Bool = { _ in true }
+
+    func testResumableClosedDedupesNewestPerAgentAndCwd() {
+        let old = closed(id: "old", cwd: "/repo", at: t0)
+        let new = closed(id: "new", cwd: "/repo", at: t1)
+        let result = SessionStore.resumableClosed(from: [old, new], transcriptExists: always, cap: 10)
+        XCTAssertEqual(result.map(\.id), ["new"])
+    }
+
+    func testResumableClosedKeepsDistinctReposAndAgents() {
+        let a = closed(id: "a", agent: .claudeCode, cwd: "/repo1", at: t0)
+        let b = closed(id: "b", agent: .codex, cwd: "/repo1", at: t1)
+        let c = closed(id: "c", agent: .claudeCode, cwd: "/repo2", at: t0)
+        let result = SessionStore.resumableClosed(from: [a, b, c], transcriptExists: always, cap: 10)
+        XCTAssertEqual(Set(result.map(\.id)), ["a", "b", "c"])
+        XCTAssertEqual(result.first?.id, "b") // newest first
+    }
+
+    func testResumableClosedExcludesActiveAndUnknownAgent() {
+        let running = closed(id: "run", status: .running, at: t1)
+        let unknown = closed(id: "unk", agent: .unknown, at: t1)
+        let result = SessionStore.resumableClosed(from: [running, unknown], transcriptExists: always, cap: 10)
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testResumableClosedDropsMissingTranscripts() {
+        let s = closed(id: "gone", at: t1)
+        let result = SessionStore.resumableClosed(from: [s], transcriptExists: { _ in false }, cap: 10)
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testResumableClosedRespectsCapNewestFirst() {
+        let sessions = (0..<5).map {
+            closed(id: "s\($0)", cwd: "/repo\($0)", at: Date(timeIntervalSince1970: Double(1_000 + $0)))
+        }
+        let result = SessionStore.resumableClosed(from: sessions, transcriptExists: always, cap: 3)
+        XCTAssertEqual(result.map(\.id), ["s4", "s3", "s2"])
+    }
 }

@@ -263,6 +263,7 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             session.status = .running
             session.startedAt = min(session.startedAt, now)
             session.finishedAt = nil
+            session.turnEndedAt = nil
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = event.sourceDescription ?? "Session started"
@@ -273,16 +274,19 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
 
         case "Notification":
             // Idle nudge after a finished turn — not a real prompt. Leave the
-            // resting state (DONE/running) untouched; see the type note above.
+            // resting state (DONE/running, possibly pending-finish) untouched;
+            // see the type note above.
             if event.notificationType == "idle_prompt" { break }
             session.status = .waitingForInput
             session.finishedAt = nil
+            session.turnEndedAt = nil
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
 
         case "PermissionRequest":
             session.status = .waitingForInput
             session.finishedAt = nil
+            session.turnEndedAt = nil
             session.attentionRaisedAt = now
             if let message = event.message?.nilIfEmpty {
                 session.lastEvent = message
@@ -293,6 +297,9 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             }
 
         case "PostToolUse":
+            // Any tool use means the turn is active again — cancel a pending
+            // finish so the store sweep can't finish a resumed turn.
+            session.turnEndedAt = nil
             if session.status == .waitingForInput {
                 session.status = .running
                 session.finishedAt = nil
@@ -301,9 +308,15 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             }
 
         case "Stop":
-            session.status = .finished
-            session.finishedAt = now
+            // Don't finish outright: the turn ended but the session may still
+            // have background work running (a same-tab sub-agent, or native
+            // `run_in_background` shells / `Monitor` watchers). Record the turn
+            // end and stay `.running` (green-pending); `SessionStore` decides
+            // when to flip to `.finished` once the work drains. See `turnEndedAt`.
             session.attentionRaisedAt = nil
+            session.turnEndedAt = now
+            session.status = .running
+            session.finishedAt = nil
             if let t = session.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
                 session.lastEvent = tail
             } else {
@@ -311,8 +324,11 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             }
 
         case "SessionEnd":
+            // The CLI process is going away, so there's nothing left to spawn
+            // more work — finish immediately rather than deferring.
             session.status = .finished
             session.finishedAt = now
+            session.turnEndedAt = nil
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = "Session ended"
@@ -354,6 +370,7 @@ struct GenericAgentEventAdapter: AgentEventAdapter {
 private func applyPrompt(_ prompt: String?, to session: inout DroidSession) {
     session.status = .running
     session.finishedAt = nil
+    session.turnEndedAt = nil
     session.attentionRaisedAt = nil
     let line = prompt?.firstMeaningfulLine()
     session.lastEvent = line ?? "Working…"

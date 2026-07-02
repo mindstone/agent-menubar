@@ -6,6 +6,9 @@ struct SessionListView: View {
     @AppStorage(HotkeyChoice.storageKey) private var hotkeyRaw: String = HotkeyChoice.off.rawValue
     @State private var expandedSessionIds: Set<String> = []
     @State private var frozenSessionOrder: [String]?
+    /// The "Closed" recovery section is collapsed by default so the popover
+    /// stays focused on active work; the user expands it to recover a session.
+    @State private var showClosed = false
 
     private var notchMode: NotchHUDMode {
         NotchHUDMode(rawValue: notchModeRaw) ?? .auto
@@ -19,18 +22,96 @@ struct SessionListView: View {
         NotchAvailability.notchedScreen() != nil
     }
 
-    private var visibleSessions: [DroidSession] {
-        let visible = store.visibleSessions
-        guard let frozenSessionOrder else { return visible }
+    /// Active (running / waiting) sessions for the main list, pinned to the
+    /// order captured when the popover opened so rows don't reshuffle live.
+    private var activeSessions: [DroidSession] {
+        let active = store.activeSessions
+        guard let frozenSessionOrder else { return active }
 
-        var remainingById = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        var remainingById = Dictionary(uniqueKeysWithValues: active.map { ($0.id, $0) })
         let pinned = frozenSessionOrder.compactMap { remainingById.removeValue(forKey: $0) }
-        let newlyVisible = visible.filter { remainingById[$0.id] != nil }
-        return pinned + newlyVisible
+        let newlyActive = active.filter { remainingById[$0.id] != nil }
+        return pinned + newlyActive
     }
 
-    private var visibleSessionIds: [String] {
-        store.visibleSessions.map(\.id)
+    private var activeSessionIds: [String] {
+        store.activeSessions.map(\.id)
+    }
+
+    /// Closed, recoverable sessions shown in the collapsed "Closed" section.
+    private var closedSessions: [DroidSession] {
+        store.resumableSessions
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: DroidSession, resumable: Bool) -> some View {
+        SessionRowView(
+            session: session,
+            isExpanded: expandedSessionIds.contains(session.id),
+            onToggleExpanded: { toggleExpanded(session.id) },
+            onFocus: { resumable ? store.resume(session) : store.focus(session) },
+            onResume: resumable ? { store.resume(session) } : nil
+        )
+        .contextMenu {
+            if resumable {
+                Button("Resume") { store.resume(session) }
+            }
+            Button("Remove from list") { store.remove(session) }
+        }
+    }
+
+    private func toggleExpanded(_ id: String) {
+        if expandedSessionIds.contains(id) {
+            expandedSessionIds.remove(id)
+        } else {
+            expandedSessionIds.insert(id)
+        }
+    }
+
+    @ViewBuilder
+    private var closedSection: some View {
+        if !closedSessions.isEmpty {
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: showClosed ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Closed")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("\(closedSessions.count)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.gray)
+                        .clipShape(Capsule())
+                    Spacer(minLength: 6)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.15)) { showClosed.toggle() }
+                }
+                if showClosed {
+                    Button("Clear all") { store.clearFinished() }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+            .help("Sessions whose terminal is closed — expand to resume one in a new tab")
+
+            Divider()
+
+            if showClosed {
+                ForEach(closedSessions) { session in
+                    sessionRow(session, resumable: true)
+                    Divider()
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -39,11 +120,6 @@ struct SessionListView: View {
                 Text("Agents")
                     .font(.headline)
                 Spacer()
-                if visibleSessions.contains(where: { $0.status == .finished || $0.status == .stale }) {
-                    Button("Clear finished") { store.clearFinished() }
-                        .buttonStyle(.borderless)
-                        .font(.callout)
-                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
@@ -56,7 +132,7 @@ struct SessionListView: View {
 
             Divider()
 
-            if visibleSessions.isEmpty {
+            if activeSessions.isEmpty && closedSessions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("No agents yet.")
                         .font(.callout)
@@ -69,26 +145,21 @@ struct SessionListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(visibleSessions) { session in
-                            SessionRowView(
-                                session: session,
-                                isExpanded: expandedSessionIds.contains(session.id),
-                                onToggleExpanded: {
-                                    if expandedSessionIds.contains(session.id) {
-                                        expandedSessionIds.remove(session.id)
-                                    } else {
-                                        expandedSessionIds.insert(session.id)
-                                    }
-                                },
-                                onFocus: {
-                                    store.focus(session)
-                                }
-                            )
-                            .contextMenu {
-                                Button("Remove from list") { store.remove(session) }
-                            }
+                        if activeSessions.isEmpty {
+                            Text("No active agents right now.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
                             Divider()
+                        } else {
+                            ForEach(activeSessions) { session in
+                                sessionRow(session, resumable: false)
+                                Divider()
+                            }
                         }
+                        closedSection
                     }
                 }
                 .frame(maxHeight: 420)
@@ -97,7 +168,7 @@ struct SessionListView: View {
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("\(visibleSessions.count) tracked")
+                    Text(footerCountText)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
@@ -116,24 +187,34 @@ struct SessionListView: View {
         .frame(width: 380)
         .animation(.easeInOut(duration: 0.18), value: store.banner)
         .onAppear {
-            frozenSessionOrder = visibleSessionIds
+            frozenSessionOrder = activeSessionIds
         }
         .onDisappear {
             frozenSessionOrder = nil
             expandedSessionIds.removeAll()
+            showClosed = false
         }
-        .onChange(of: visibleSessionIds) { ids in
+        .onChange(of: activeSessionIds) { ids in
             reconcileFrozenOrder(with: ids)
         }
     }
 
-    private func reconcileFrozenOrder(with visibleIds: [String]) {
+    private var footerCountText: String {
+        let active = activeSessions.count
+        let closed = closedSessions.count
+        if closed > 0 {
+            return "\(active) active · \(closed) closed"
+        }
+        return "\(active) active"
+    }
+
+    private func reconcileFrozenOrder(with activeIds: [String]) {
         guard var frozen = frozenSessionOrder else { return }
-        let visibleSet = Set(visibleIds)
-        frozen.removeAll { !visibleSet.contains($0) }
+        let activeSet = Set(activeIds)
+        frozen.removeAll { !activeSet.contains($0) }
 
         let frozenSet = Set(frozen)
-        frozen.append(contentsOf: visibleIds.filter { !frozenSet.contains($0) })
+        frozen.append(contentsOf: activeIds.filter { !frozenSet.contains($0) })
         frozenSessionOrder = frozen
     }
 

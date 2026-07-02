@@ -5,6 +5,9 @@ struct SessionRowView: View {
     let isExpanded: Bool
     let onToggleExpanded: () -> Void
     let onFocus: () -> Void
+    /// Non-nil only for closed, resumable rows; renders a "Resume" button that
+    /// relaunches the session in a new terminal tab.
+    var onResume: (() -> Void)? = nil
 
     @State private var pulse: Bool = false
 
@@ -25,6 +28,15 @@ struct SessionRowView: View {
                     statusPill
                     hostAppPill
                     Spacer(minLength: 6)
+                    if let onResume {
+                        Button(action: onResume) {
+                            Label("Resume", systemImage: "arrow.clockwise")
+                                .labelStyle(.titleAndIcon)
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Open a new \(session.hostApp == .unknown ? "terminal" : session.hostApp.displayName) tab and resume this session")
+                    }
                     Text(relativeTime(from: session.lastEventAt))
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)

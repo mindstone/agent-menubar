@@ -111,21 +111,70 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         XCTAssertEqual(s.lastEvent, "Fix the bug")
     }
 
-    func testStopGoesFinished() {
+    /// `Stop` no longer finishes outright — it defers to `SessionStore`, which
+    /// decides whether background work is still outstanding. The adapter records
+    /// the turn end and stays `.running` (green-pending) with `finishedAt` clear.
+    func testStopDefersFinish() {
         var s = newSession(status: .running)
         s.attentionRaisedAt = now
         apply(["hook_event_name": "Stop"], to: &s)
-        XCTAssertEqual(s.status, .finished)
-        XCTAssertEqual(s.finishedAt, now)
+        XCTAssertEqual(s.status, .running, "Stop must stay running until the store finishes it")
+        XCTAssertEqual(s.turnEndedAt, now, "Stop must record the turn-end timestamp")
+        XCTAssertNil(s.finishedAt)
         XCTAssertNil(s.attentionRaisedAt)
         XCTAssertEqual(s.lastEvent, "Finished turn")
     }
 
+    /// `SessionEnd` means the CLI process is exiting — its native background work
+    /// dies with it — so finish immediately rather than deferring.
     func testSessionEndGoesFinished() {
         var s = newSession(status: .running, lastEvent: "Working…")
         apply(["hook_event_name": "SessionEnd"], to: &s)
         XCTAssertEqual(s.status, .finished)
         XCTAssertEqual(s.finishedAt, now)
+        XCTAssertNil(s.turnEndedAt)
+    }
+
+    /// A `SessionEnd` arriving on a pending-finish session clears the marker.
+    func testSessionEndClearsPendingFinish() {
+        var s = newSession(status: .running)
+        apply(["hook_event_name": "Stop"], to: &s)
+        XCTAssertEqual(s.turnEndedAt, now)
+        apply(["hook_event_name": "SessionEnd"], to: &s)
+        XCTAssertEqual(s.status, .finished)
+        XCTAssertNil(s.turnEndedAt)
+    }
+
+    // MARK: - Pending finish is cancelled when the turn resumes
+
+    func testNewPromptCancelsPendingFinish() {
+        var s = newSession(status: .running)
+        apply(["hook_event_name": "Stop"], to: &s)
+        XCTAssertNotNil(s.turnEndedAt)
+        apply(["hook_event_name": "UserPromptSubmit", "prompt": "Keep going"], to: &s)
+        XCTAssertEqual(s.status, .running)
+        XCTAssertNil(s.turnEndedAt, "a fresh prompt re-arms the turn and cancels the pending finish")
+    }
+
+    func testToolUseCancelsPendingFinish() {
+        var s = newSession(status: .running)
+        apply(["hook_event_name": "Stop"], to: &s)
+        XCTAssertNotNil(s.turnEndedAt)
+        apply(["hook_event_name": "PostToolUse", "tool_name": "Bash"], to: &s)
+        XCTAssertNil(s.turnEndedAt, "tool activity means the turn is live again")
+    }
+
+    /// The idle nudge that fires ~60s after Stop must NOT cancel a pending
+    /// finish — the turn is still resting on its background work.
+    func testIdlePromptKeepsPendingFinish() {
+        var s = newSession(status: .running)
+        apply(["hook_event_name": "Stop"], to: &s)
+        XCTAssertEqual(s.turnEndedAt, now)
+        apply(["hook_event_name": "Notification",
+               "notification_type": "idle_prompt",
+               "message": "Claude is waiting for your input"], to: &s)
+        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.turnEndedAt, now, "idle_prompt must leave a pending finish untouched")
     }
 
     // MARK: - idle_prompt regression (the reported bug)
@@ -173,18 +222,23 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         apply(["hook_event_name": "PostToolUse", "tool_name": "Edit"], to: &s)
         XCTAssertEqual(s.status, .running)
 
+        // Stop defers to the store; at the adapter level it stays running with
+        // the turn-end recorded.
         apply(["hook_event_name": "Stop"], to: &s)
-        XCTAssertEqual(s.status, .finished)
+        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.turnEndedAt, now)
 
-        // The nudge that used to break things.
+        // The nudge that used to break things — leaves the pending finish alone.
         apply(["hook_event_name": "Notification",
                "notification_type": "idle_prompt",
                "message": "Claude is waiting for your input"], to: &s)
-        XCTAssertEqual(s.status, .finished)
+        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.turnEndedAt, now)
 
-        // Next turn re-arms cleanly.
+        // Next turn re-arms cleanly and cancels the pending finish.
         apply(["hook_event_name": "UserPromptSubmit", "prompt": "One more thing"], to: &s)
         XCTAssertEqual(s.status, .running)
+        XCTAssertNil(s.turnEndedAt)
         XCTAssertEqual(s.firstPrompt, "Refactor this")
     }
 

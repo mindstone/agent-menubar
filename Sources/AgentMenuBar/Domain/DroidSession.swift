@@ -23,6 +23,16 @@ struct DroidSession: Codable, Identifiable, Equatable {
     var transcriptPath: URL?
     var attentionRaisedAt: Date?
 
+    /// Set when a turn-ending hook (`Stop`/`SessionEnd`) arrived but finishing
+    /// was deferred because the session still has outstanding background work —
+    /// a live sub-agent in the same tab, or native Claude background tasks
+    /// (`run_in_background` shells, the `Monitor` watcher) still open in the
+    /// transcript. While this is non-nil the row stays `.running` (green-pending)
+    /// and the completion HUD does not fire; `SessionStore` clears it and flips
+    /// to `.finished` once the work drains. `nil` for a normal in-flight turn or
+    /// a session that has already finished.
+    var turnEndedAt: Date?
+
     /// The user's first prompt for this session, captured once on the first
     /// `UserPromptSubmit` and never overwritten. Surfaced in the popover as
     /// the "task" subtitle so a row at a glance says what the agent was
@@ -48,6 +58,12 @@ struct DroidSession: Codable, Identifiable, Equatable {
         return .unknown
     }
 
+    /// Whether this session's agent can be resumed by id from the CLI (see
+    /// `ResumeCommand`). Drives whether a closed row offers a "Resume" action.
+    var supportsResume: Bool {
+        ResumeCommand.supportsResume(agentKind)
+    }
+
     init(
         id: String,
         agentKind: AgentKind,
@@ -63,6 +79,7 @@ struct DroidSession: Codable, Identifiable, Equatable {
         finishedAt: Date?,
         transcriptPath: URL?,
         attentionRaisedAt: Date?,
+        turnEndedAt: Date? = nil,
         firstPrompt: String? = nil,
         tabTitle: String? = nil
     ) {
@@ -80,6 +97,7 @@ struct DroidSession: Codable, Identifiable, Equatable {
         self.finishedAt = finishedAt
         self.transcriptPath = transcriptPath
         self.attentionRaisedAt = attentionRaisedAt
+        self.turnEndedAt = turnEndedAt
         self.firstPrompt = firstPrompt
         self.tabTitle = tabTitle
     }
@@ -99,6 +117,7 @@ struct DroidSession: Codable, Identifiable, Equatable {
         case finishedAt
         case transcriptPath
         case attentionRaisedAt
+        case turnEndedAt
         case firstPrompt
         case tabTitle
     }
@@ -119,6 +138,7 @@ struct DroidSession: Codable, Identifiable, Equatable {
         finishedAt = try c.decodeIfPresent(Date.self, forKey: .finishedAt)
         transcriptPath = try c.decodeIfPresent(URL.self, forKey: .transcriptPath)
         attentionRaisedAt = try c.decodeIfPresent(Date.self, forKey: .attentionRaisedAt)
+        turnEndedAt = try c.decodeIfPresent(Date.self, forKey: .turnEndedAt)
         firstPrompt = try c.decodeIfPresent(String.self, forKey: .firstPrompt)
         tabTitle = try c.decodeIfPresent(String.self, forKey: .tabTitle)
     }
