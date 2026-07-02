@@ -1,0 +1,3 @@
+[submodule "docs/coding-agent-instructions"]
+	path = docs/coding-agent-instructions
+	url = https://github.com/mindstone/coding-agent-instructions
