@@ -49,10 +49,10 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
 
     // MARK: - Individual transitions
 
-    func testSessionStartGoesRunning() {
+    func testSessionStartGoesIdle() {
         var s = newSession(status: .finished, lastEvent: "Finished turn")
         apply(["hook_event_name": "SessionStart", "source": "startup"], to: &s)
-        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.status, .idle)
         XCTAssertNil(s.finishedAt)
         XCTAssertNil(s.attentionRaisedAt)
     }
@@ -113,12 +113,12 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
 
     /// `Stop` no longer finishes outright — it defers to `SessionStore`, which
     /// decides whether background work is still outstanding. The adapter records
-    /// the turn end and stays `.running` (green-pending) with `finishedAt` clear.
+    /// the turn end and moves to `.awaitingBackgroundWork` with `finishedAt` clear.
     func testStopDefersFinish() {
         var s = newSession(status: .running)
         s.attentionRaisedAt = now
         apply(["hook_event_name": "Stop"], to: &s)
-        XCTAssertEqual(s.status, .running, "Stop must stay running until the store finishes it")
+        XCTAssertEqual(s.status, .awaitingBackgroundWork, "Stop must defer to awaitingBackgroundWork until the store finishes it")
         XCTAssertEqual(s.turnEndedAt, now, "Stop must record the turn-end timestamp")
         XCTAssertNil(s.finishedAt)
         XCTAssertNil(s.attentionRaisedAt)
@@ -145,6 +145,25 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         XCTAssertNil(s.turnEndedAt)
     }
 
+    /// `SessionEnd` means the CLI process itself is exiting, not just the turn —
+    /// `sessionEnded` must flip so `SessionStore.shouldSettleToIdle` never
+    /// resurrects this row as "READY" while the tab happens to stay open.
+    func testSessionEndSetsSessionEnded() {
+        var s = newSession(status: .running, lastEvent: "Working…")
+        apply(["hook_event_name": "SessionEnd"], to: &s)
+        XCTAssertTrue(s.sessionEnded)
+    }
+
+    /// A resumed session (same session id, fresh `SessionStart`) must clear a
+    /// prior `sessionEnded` marker so it becomes eligible to settle to `.idle`
+    /// again — see `DroidSession.sessionEnded`.
+    func testSessionStartClearsSessionEndedOnResume() {
+        var s = newSession(status: .finished, lastEvent: "Session ended")
+        s.sessionEnded = true
+        apply(["hook_event_name": "SessionStart", "source": "resume"], to: &s)
+        XCTAssertFalse(s.sessionEnded)
+    }
+
     // MARK: - Pending finish is cancelled when the turn resumes
 
     func testNewPromptCancelsPendingFinish() {
@@ -162,6 +181,7 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         XCTAssertNotNil(s.turnEndedAt)
         apply(["hook_event_name": "PostToolUse", "tool_name": "Bash"], to: &s)
         XCTAssertNil(s.turnEndedAt, "tool activity means the turn is live again")
+        XCTAssertEqual(s.status, .running)
     }
 
     /// The idle nudge that fires ~60s after Stop must NOT cancel a pending
@@ -173,7 +193,7 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         apply(["hook_event_name": "Notification",
                "notification_type": "idle_prompt",
                "message": "Claude is waiting for your input"], to: &s)
-        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.status, .awaitingBackgroundWork)
         XCTAssertEqual(s.turnEndedAt, now, "idle_prompt must leave a pending finish untouched")
     }
 
@@ -211,7 +231,7 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
     func testFullTurnLifecycleEndsFinished() {
         var s = newSession(status: .running, lastEvent: "Starting…")
         apply(["hook_event_name": "SessionStart", "source": "startup"], to: &s)
-        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.status, .idle)
 
         apply(["hook_event_name": "UserPromptSubmit", "prompt": "Refactor this"], to: &s)
         XCTAssertEqual(s.status, .running)
@@ -222,17 +242,17 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
         apply(["hook_event_name": "PostToolUse", "tool_name": "Edit"], to: &s)
         XCTAssertEqual(s.status, .running)
 
-        // Stop defers to the store; at the adapter level it stays running with
-        // the turn-end recorded.
+        // Stop defers to the store; at the adapter level it moves to
+        // awaitingBackgroundWork with the turn-end recorded.
         apply(["hook_event_name": "Stop"], to: &s)
-        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.status, .awaitingBackgroundWork)
         XCTAssertEqual(s.turnEndedAt, now)
 
         // The nudge that used to break things — leaves the pending finish alone.
         apply(["hook_event_name": "Notification",
                "notification_type": "idle_prompt",
                "message": "Claude is waiting for your input"], to: &s)
-        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.status, .awaitingBackgroundWork)
         XCTAssertEqual(s.turnEndedAt, now)
 
         // Next turn re-arms cleanly and cancels the pending finish.
@@ -247,5 +267,89 @@ final class ClaudeCodeEventAdapterTests: XCTestCase {
     func testNotificationTypeDecodes() {
         let e = event(["hook_event_name": "Notification", "notification_type": "idle_prompt"])
         XCTAssertEqual(e.notificationType, "idle_prompt")
+    }
+
+    // MARK: - Reported gaps (popover status audit)
+
+    /// A background task's completion is redelivered into the conversation as a
+    /// synthetic user turn (`origin.kind == "task-notification"` in the raw
+    /// transcript JSONL, `message.content` a plain multi-line string). When
+    /// `Stop` fires right on top of that delivery — before the driver's next
+    /// assistant turn produces its own text — `TranscriptReader.tailPreview`
+    /// walks backward from EOF and happily extracts that synthetic user turn's
+    /// `content` as "the most recent meaningful entry", verbatim markup and all;
+    /// it has no concept of message role or of this wrapper format (unlike
+    /// `TranscriptBackgroundScan`, which already knows to parse it). Confirmed
+    /// against a real transcript (weteachbackend session
+    /// fbc9ad14-3270-4d42-ad8b-ff376863d95d, task a5281bbc0d7a45c0d, line 311):
+    /// the row showed literal multi-line `<task-notification>` markup as its
+    /// status text. `status` itself isn't asserted here — that transcript's
+    /// notification was a `<status>failed</status>` terminal one, which is
+    /// exactly the kind `TranscriptBackgroundScan` counts as no-longer-outstanding,
+    /// so RUNNING there came from the turn being re-armed, not from a live
+    /// background task still deferring the finish.
+    func testStopPreviewLeaksRawTaskNotificationMarkupFromTranscriptTail() throws {
+        let dir = FileManager.default.temporaryDirectory
+        let path = dir.appendingPathComponent("\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: path) }
+
+        // Shape lifted verbatim from the real transcript line that produced the
+        // screenshot: a synthetic "user" turn whose `content` is the raw,
+        // multi-line task-notification wrapper (not an Anthropic content-block
+        // array), tagged by `origin.kind`.
+        let transcriptLine = """
+        {"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>a5281bbc0d7a45c0d</task-id>\\n<status>failed</status>\\n<summary>Agent stalled: no progress for 600s</summary>\\n</task-notification>"},"origin":{"kind":"task-notification"},"promptSource":"system"}
+        """
+        try transcriptLine.write(to: path, atomically: true, encoding: .utf8)
+
+        var s = newSession(status: .running, lastEvent: "Working…")
+        s.transcriptPath = path
+        apply(["hook_event_name": "Stop"], to: &s)
+
+        XCTAssertEqual(s.status, .awaitingBackgroundWork, "Stop always defers to awaitingBackgroundWork; this test is only about lastEvent's text")
+
+        XCTAssertFalse(s.lastEvent.contains("<task-notification>"),
+                        "lastEvent should not show raw internal markup")
+        XCTAssertFalse(s.lastEvent.contains("\n"),
+                        "lastEvent renders as a single status line in the row")
+    }
+
+    /// `SubagentStop` fires when a Task-tool subagent completes. It's a safe
+    /// no-op at the adapter level — `SessionStore.apply` already bumps
+    /// `lastEventAt` and re-runs `resolvePendingFinishes` after every event
+    /// regardless of adapter handling, so simply registering the hook (see
+    /// `hooks/claude-code-hooks-block.json`) is enough to react sooner than
+    /// the 5s inventory-timer fallback would.
+    func testSubagentStopDoesNotDisturbStatus() {
+        let e = event(["hook_event_name": "SubagentStop"])
+        XCTAssertEqual(e.hookEventName, "SubagentStop")
+
+        var s = newSession(status: .running, lastEvent: "Working…")
+        apply(["hook_event_name": "SubagentStop"], to: &s)
+        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.lastEvent, "Working…")
+    }
+
+    /// A background task's completion can also be redelivered as a synthetic
+    /// `UserPromptSubmit` whose `prompt` is the raw `<task-notification>`
+    /// wrapper. `applyPrompt` must show `TaskNotificationText.friendlySummary`'s
+    /// result instead of the raw markup, and must not capture it as
+    /// `firstPrompt` — that field is reserved for the human's real first task.
+    func testUserPromptSubmitWithTaskNotificationTextProducesFriendlySummary() {
+        let notification = """
+        <task-notification>
+        <task-id>a5281bbc0d7a45c0d</task-id>
+        <status>failed</status>
+        <summary>Agent stalled: no progress for 600s</summary>
+        </task-notification>
+        """
+        var s = newSession(status: .running, lastEvent: "Working…")
+        XCTAssertNil(s.firstPrompt)
+
+        apply(["hook_event_name": "UserPromptSubmit", "prompt": notification], to: &s)
+
+        XCTAssertEqual(s.status, .running)
+        XCTAssertEqual(s.lastEvent, TaskNotificationText.friendlySummary(in: notification))
+        XCTAssertNil(s.firstPrompt, "a redelivered task notification must not be captured as the human's first prompt")
     }
 }

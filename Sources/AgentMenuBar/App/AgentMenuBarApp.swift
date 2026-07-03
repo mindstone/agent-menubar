@@ -98,6 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("AgentMenuBar: status item registered (visible=\(item.isVisible))")
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        store?.flushPendingSave()
+    }
+
     private func applyHotkeyFromDefaults() {
         let raw = UserDefaults.standard.string(forKey: HotkeyChoice.storageKey) ?? HotkeyChoice.off.rawValue
         let choice = HotkeyChoice(rawValue: raw) ?? .off

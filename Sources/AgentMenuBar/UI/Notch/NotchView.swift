@@ -66,7 +66,7 @@ struct NotchView: View {
             return session
         }
         return store.visibleSessions.first(where: { $0.status == .waitingForInput })
-            ?? store.visibleSessions.first(where: { $0.status == .running })
+            ?? store.visibleSessions.first(where: { $0.status == .running || $0.status == .awaitingBackgroundWork })
             ?? store.visibleSessions.first
     }
 
@@ -243,7 +243,7 @@ struct NotchView: View {
                     .truncationMode(.tail)
             }
             if let s = displayedSession {
-                Text(s.lastEvent)
+                Text(s.jobSummary ?? s.lastEvent)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.7))
                     .lineLimit(1)

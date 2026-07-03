@@ -9,20 +9,37 @@ struct TransientBanner: Equatable {
 }
 
 final class SessionStore: ObservableObject {
-    @Published private(set) var sessions: [DroidSession] = []
+    @Published private(set) var sessions: [DroidSession] = [] { didSet { sessionsRevision &+= 1 } }
     @Published private(set) var menuBarState: MenuBarState = .idle
     /// `unique id of session` → current `name of session`. The keys are the
     /// alive-tab set used by `visibleSessions`; the values feed each row's
     /// tab-title meta line.
-    @Published private(set) var aliveItermTabs: [String: String] = [:]
+    @Published private(set) var aliveItermTabs: [String: String] = [:] { didSet { sessionsRevision &+= 1 } }
     /// `id of terminal` (AppleScript UUID) → current `title of terminal`.
-    @Published private(set) var aliveGhosttyTabs: [String: String] = [:]
+    @Published private(set) var aliveGhosttyTabs: [String: String] = [:] { didSet { sessionsRevision &+= 1 } }
     @Published var banner: TransientBanner?
+
+    /// Bumped whenever `sessions`/`aliveItermTabs`/`aliveGhosttyTabs` changes.
+    /// `visibleSessions` memoizes on this so the (dictionary-building, sorting)
+    /// grouping work runs once per mutation no matter how many times views
+    /// read it in a single update pass — the always-on notch HUD reads it
+    /// several times per render just to diff signatures.
+    private var sessionsRevision: Int = 0
+    private var visibleSessionsCache: (revision: Int, value: [DroidSession])?
 
     /// Sessions to show in the UI: one entry per currently-open terminal tab,
     /// representing the most recent agent run in that tab. Sessions without a
     /// terminal binding are always passed through.
     var visibleSessions: [DroidSession] {
+        if let cache = visibleSessionsCache, cache.revision == sessionsRevision {
+            return cache.value
+        }
+        let computed = computeVisibleSessions()
+        visibleSessionsCache = (sessionsRevision, computed)
+        return computed
+    }
+
+    private func computeVisibleSessions() -> [DroidSession] {
         var latestPerTab: [String: DroidSession] = [:]
         var orphans: [DroidSession] = []
         for s in sessions {
@@ -68,12 +85,33 @@ final class SessionStore: ObservableObject {
     /// finished/stale, resumable by their agent, transcript still on disk.
     /// Deduped to the most recent per (agent, working directory) and capped, so
     /// a repo with dozens of past runs collapses to one recoverable row.
+    ///
+    /// Cached on a fingerprint of the closed-session identities rather than
+    /// `sessionsRevision`: this is read on every hook event (the always-on
+    /// notch HUD and the popover's list both observe `sessions`), but its
+    /// `FileManager.fileExists` check per candidate only needs to re-run when
+    /// which sessions are closed actually changes — not when an unrelated
+    /// active session's timestamp ticks. Without this it was doing a disk stat
+    /// per closed session on every single tool-call hook.
+    private var resumableCacheKey: [String]?
+    private var resumableCache: [DroidSession] = []
+
     var resumableSessions: [DroidSession] {
-        Self.resumableClosed(
+        let key = sessions.compactMap { s -> String? in
+            guard Self.isClosed(s) else { return nil }
+            return "\(s.id)|\(s.finishedAt?.timeIntervalSince1970 ?? 0)"
+        }
+        if let resumableCacheKey, resumableCacheKey == key {
+            return resumableCache
+        }
+        let computed = Self.resumableClosed(
             from: sessions,
             transcriptExists: { self.transcriptResumable($0) },
             cap: maxResumableRows
         )
+        resumableCacheKey = key
+        resumableCache = computed
+        return computed
     }
 
     /// A session is resumable only while its transcript still exists (the agent
@@ -86,7 +124,7 @@ final class SessionStore: ObservableObject {
     }
 
     static func isActive(_ s: DroidSession) -> Bool {
-        s.status == .running || s.status == .waitingForInput
+        s.status == .running || s.status == .waitingForInput || s.status == .idle || s.status == .awaitingBackgroundWork
     }
 
     static func isClosed(_ s: DroidSession) -> Bool {
@@ -121,6 +159,12 @@ final class SessionStore: ObservableObject {
     private let resumablePruneTTL: TimeInterval = 30 * 24 * 60 * 60 // keep resumable closed sessions ~30d
     private let maxResumableRows = 15                      // cap the resumable list to the most recent
     private let staleAfterIdle: TimeInterval = 60 * 60     // mark loaded running session stale if > 1h silent
+    /// Grace period after a session finishes before settling it to `.idle` if its
+    /// terminal tab is still open. Must exceed NotchView's `completionDisplayDuration`
+    /// (3s) so the "just finished" pop always finishes playing before the row's
+    /// label changes out from under it. Comfortably covered by one full
+    /// `inventoryRefreshInterval` tick (5s).
+    private let finishedIdleGrace: TimeInterval = 5
     private let bannerTTL: TimeInterval = 4
     private let inventoryRefreshInterval: TimeInterval = 5
     /// When the app launched. Finished sessions that completed before this —
@@ -128,6 +172,16 @@ final class SessionStore: ObservableObject {
     /// menu-bar / notch "done" indicator, so old completions don't resurrect it.
     private let launchedAt = Date()
     private let saveDebounce = DispatchQueue(label: "AgentMenuBar.SessionStore.save")
+    /// How long to wait for quiet before actually writing to disk. A busy
+    /// agent fires many hook events per second (every tool call is at least
+    /// one); without this, each one triggered its own full JSON encode +
+    /// atomic file replace of the entire (100+ session) store back-to-back,
+    /// which showed up as the app's single largest CPU cost. Coalescing to
+    /// one write per quiet period doesn't change what's on screen — the
+    /// in-memory `@Published sessions` updates immediately regardless: this
+    /// only throttles the disk mirror used to survive a restart.
+    private let saveDebounceInterval: TimeInterval = 0.5
+    private var pendingSaveWorkItem: DispatchWorkItem?
     private var bannerClearTask: Task<Void, Never>?
     private var inventoryTimer: Timer?
     /// Memoized background-task counts per transcript path, keyed by file size +
@@ -135,6 +189,15 @@ final class SessionStore: ObservableObject {
     /// actually grown. Transcripts only ever append, so a matching (size,mtime)
     /// guarantees an unchanged scan result.
     private var bgScanCache: [String: (size: UInt64, mtime: Date, outstanding: Int)] = [:]
+    /// Session id → `(firstPrompt, lastEvent)` fingerprint the row's current
+    /// `jobSummary` was generated from. Lets the 5s sweep skip sessions whose
+    /// status text hasn't actually changed since the last (successful or
+    /// failed) attempt, instead of re-invoking a CLI every tick.
+    private var jobSummarySourceHash: [String: String] = [:]
+    /// In-flight summary generation per session id, so a status change that
+    /// arrives mid-generation cancels the now-stale attempt rather than
+    /// racing it — same cancel-and-replace idiom as `bannerClearTask`.
+    private var jobSummaryTasks: [String: Task<Void, Never>] = [:]
 
     init() {
         let loaded = SessionStorePersistence.load()
@@ -179,10 +242,48 @@ final class SessionStore: ObservableObject {
                 // background tasks just completed (no hook fires for that) flips
                 // to DONE cleanly instead of being eligible for staling.
                 let finished = self.resolvePendingFinishes(now: Date())
+                let settled = self.settleIdleSessions(now: Date())
                 let aged = self.ageStaleSessions()
-                if aged || finished { self.sortSessions() }
-                if setChanged || aged || finished { self.recomputeBarState() }
-                if titlesChanged || aged || finished { self.save() }
+                if aged || finished || settled { self.sortSessions() }
+                if setChanged || aged || finished || settled { self.recomputeBarState() }
+                if titlesChanged || aged || finished || settled { self.save() }
+                self.refreshJobSummaries()
+            }
+        }
+    }
+
+    // MARK: - Job summaries
+
+    /// Kicks off (debounced, cancel-and-replace) AI one-liner generation for
+    /// any visible session whose `(firstPrompt, lastEvent)` changed since it
+    /// was last summarized. Scoped to `visibleSessions` — currently open tabs
+    /// only — so this can't spawn CLI processes for the dozens of historical
+    /// entries the store otherwise retains.
+    @MainActor
+    private func refreshJobSummaries() {
+        for session in visibleSessions {
+            guard JobSummaryCommand.supportsSummary(session.agentKind) else { continue }
+            let hash = "\(session.firstPrompt ?? "")\u{1}\(session.lastEvent)"
+            guard jobSummarySourceHash[session.id] != hash else { continue }
+
+            jobSummaryTasks[session.id]?.cancel()
+            jobSummarySourceHash[session.id] = hash
+            let sessionId = session.id
+            let prompt = JobSummaryCommand.prompt(firstPrompt: session.firstPrompt, lastEvent: session.lastEvent)
+            guard let argv = JobSummaryCommand.argv(for: session.agentKind, prompt: prompt) else { continue }
+
+            jobSummaryTasks[sessionId] = Task.detached { [weak self] in
+                let summary = JobSummaryRunner.run(argv: argv)
+                guard !Task.isCancelled, let summary else { return }
+                await MainActor.run { [weak self] in
+                    guard let self, let idx = self.sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+                    // The session may have moved on to newer status text while
+                    // this ran; only apply the summary if it's still current.
+                    let currentHash = "\(self.sessions[idx].firstPrompt ?? "")\u{1}\(self.sessions[idx].lastEvent)"
+                    guard currentHash == hash else { return }
+                    self.sessions[idx].jobSummary = summary
+                    self.save()
+                }
             }
         }
     }
@@ -242,7 +343,7 @@ final class SessionStore: ObservableObject {
 
     private func computeBarState() -> MenuBarState {
         let visible = visibleSessions
-        let running = visible.filter { $0.status == .running }.count
+        let running = visible.filter { $0.status == .running || $0.status == .awaitingBackgroundWork }.count
         let waiting = visible.filter { $0.status == .waitingForInput }.count
         // Only count completions from this run, not restored old finished rows.
         let finished = visible.filter {
@@ -280,7 +381,7 @@ final class SessionStore: ObservableObject {
         guard let key = tabKey(for: s) else { return false }
         return sessions.contains { other in
             other.id != s.id
-                && (other.status == .running || other.status == .waitingForInput)
+                && (other.status == .running || other.status == .waitingForInput || other.status == .awaitingBackgroundWork)
                 && tabKey(for: other) == key
         }
     }
@@ -319,7 +420,7 @@ final class SessionStore: ObservableObject {
     private func resolvePendingFinishes(now: Date) -> Bool {
         var changed = false
         for i in sessions.indices where sessions[i].turnEndedAt != nil {
-            guard sessions[i].status == .running else {
+            guard sessions[i].status == .awaitingBackgroundWork else {
                 // No longer pending-running (e.g. resumed and re-finished, or
                 // ended): clear the marker without firing a completion.
                 sessions[i].turnEndedAt = nil
@@ -577,6 +678,21 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Pure migration step for `reconcile`: normalizes the pre-`.awaitingBackgroundWork`
+    /// encoding — a pending-finish row persisted by an older build as `.running`
+    /// with `turnEndedAt` set — to `.awaitingBackgroundWork`. Without this, the
+    /// finish/staleness checks below (which now key off `.awaitingBackgroundWork`)
+    /// wouldn't recognize the row as pending, silently drop the `turnEndedAt`
+    /// marker on the next sweep, and leave it stuck RUNNING forever if its tab
+    /// stays open.
+    static func migrateLegacyPendingFinish(_ s: DroidSession) -> DroidSession {
+        var copy = s
+        if copy.turnEndedAt != nil && copy.status == .running {
+            copy.status = .awaitingBackgroundWork
+        }
+        return copy
+    }
+
     private func reconcile(_ loaded: [DroidSession]) -> [DroidSession] {
         let now = Date()
         return loaded.compactMap { (s: DroidSession) -> DroidSession? in
@@ -591,14 +707,14 @@ final class SessionStore: ObservableObject {
                 let ttl = resumable ? resumablePruneTTL : pruneTTL
                 if now.timeIntervalSince(endTime) > ttl { return nil }
             }
-            var copy = s
+            var copy = Self.migrateLegacyPendingFinish(s)
             // A pending-finish row loaded from disk: we can't trust live sibling
             // state across a restart, so re-check the transcript only. If no
             // native background work remains (or the transcript is gone), the
             // work really did finish while we were off — finalize it. Otherwise
             // leave it pending and let the staleness rule below be the backstop.
             // This is the app-quit cleanup path.
-            if copy.turnEndedAt != nil && copy.status == .running {
+            if copy.turnEndedAt != nil && copy.status == .awaitingBackgroundWork {
                 let outstanding = copy.transcriptPath.map { TranscriptBackgroundScan.outstanding($0) } ?? 0
                 if outstanding == 0 {
                     copy.status = .finished
@@ -606,9 +722,9 @@ final class SessionStore: ObservableObject {
                     copy.turnEndedAt = nil
                 }
             }
-            // Mark anything that was "running"/"waitingForInput" pre-restart but has been
-            // silent for too long as stale — process is likely gone.
-            if copy.status == .running || copy.status == .waitingForInput {
+            // Mark anything that was alive pre-restart but has been silent for
+            // too long as stale — process is likely gone.
+            if copy.status == .running || copy.status == .waitingForInput || copy.status == .idle || copy.status == .awaitingBackgroundWork {
                 if now.timeIntervalSince(copy.lastEventAt) > staleAfterIdle {
                     copy.status = .stale
                 }
@@ -636,6 +752,47 @@ final class SessionStore: ObservableObject {
             sessions[i].status = .stale
             if sessions[i].finishedAt == nil { sessions[i].finishedAt = now }
             changed = true
+        }
+        return changed
+    }
+
+    /// Periodic sweep (driven by the inventory timer, alongside `ageStaleSessions`)
+    /// that settles sessions between the `.finished` and `.idle` states based on
+    /// whether their terminal tab is still open. See `shouldSettleToIdle` /
+    /// `shouldCloseIdle` for the two directions. Returns `true` if anything changed.
+    ///
+    /// The settle-**to**-idle direction is restricted to `visibleSessions` (each
+    /// tab's current representative, plus true orphans with no terminal binding
+    /// at all): a tab id can outlive the session that recorded it, so an old,
+    /// superseded `.finished` session from a previous agent run can share a tab
+    /// id with the session now actually occupying that (still-alive) tab.
+    /// Evaluating every session that merely has a matching tab id would
+    /// resurrect that old record to `.idle` just because the tab happens to
+    /// still be alive for someone else — only the tab's current occupant is
+    /// eligible to settle. The close-idle direction only fires once a shared
+    /// tab id is confirmed *dead*, which is unambiguous for every session
+    /// recording that id (no "alive for someone else" to be fooled by), so it
+    /// deliberately keeps scanning all sessions — restricting it too would
+    /// silently reintroduce the ~1h `ageStaleSessions` delay that
+    /// `shouldCloseIdle`'s prompt-close behavior exists to avoid.
+    @MainActor
+    @discardableResult
+    private func settleIdleSessions(now: Date) -> Bool {
+        var changed = false
+        let representativeIds = Set(visibleSessions.map(\.id))
+        for i in sessions.indices {
+            let s = sessions[i]
+            let alive = isTabAlive(s)
+            let bound = hasTerminalBinding(s)
+            if representativeIds.contains(s.id),
+               Self.shouldSettleToIdle(s, tabAlive: alive, hasBinding: bound, grace: finishedIdleGrace, now: now) {
+                sessions[i].status = .idle
+                changed = true
+            } else if Self.shouldCloseIdle(s, tabAlive: alive, hasBinding: bound) {
+                sessions[i].status = .finished
+                if sessions[i].finishedAt == nil { sessions[i].finishedAt = now }
+                changed = true
+            }
         }
         return changed
     }
@@ -681,9 +838,26 @@ final class SessionStore: ObservableObject {
     /// only when it has been silent past `idleTTL` *and* its terminal tab is
     /// gone (or it never had a resolvable binding). A live tab is left alone.
     static func shouldStale(_ s: DroidSession, tabAlive: Bool, hasBinding: Bool, idleTTL: TimeInterval, now: Date) -> Bool {
-        guard s.status == .running || s.status == .waitingForInput else { return false }
+        guard s.status == .running || s.status == .waitingForInput || s.status == .idle || s.status == .awaitingBackgroundWork else { return false }
         guard now.timeIntervalSince(s.lastEventAt) > idleTTL else { return false }
         return hasBinding ? !tabAlive : true
+    }
+
+    /// Pure decision for `settleIdleSessions`: a `.finished` session whose tab is
+    /// still open settles to `.idle` once `grace` has elapsed since it finished —
+    /// long enough for the notch's completion pop to have already played out.
+    static func shouldSettleToIdle(_ s: DroidSession, tabAlive: Bool, hasBinding: Bool, grace: TimeInterval, now: Date) -> Bool {
+        guard hasBinding, tabAlive, s.status == .finished, !s.sessionEnded else { return false }
+        return now.timeIntervalSince(s.finishedAt ?? s.lastEventAt) >= grace
+    }
+
+    /// Pure decision for `settleIdleSessions`: an `.idle` session whose tab has
+    /// closed should close out to `.finished` promptly. Unlike `shouldStale`'s
+    /// 1-hour conservatism for running/waiting sessions (which might be silently
+    /// mid-turn), `.idle` means nothing is happening — once the tab is gone there's
+    /// nothing left to wait for.
+    static func shouldCloseIdle(_ s: DroidSession, tabAlive: Bool, hasBinding: Bool) -> Bool {
+        hasBinding && !tabAlive && s.status == .idle
     }
 
     private static func sessionSort(_ a: DroidSession, _ b: DroidSession) -> Bool {
@@ -694,10 +868,12 @@ final class SessionStore: ObservableObject {
 
     private static func statusRank(_ status: SessionStatus) -> Int {
         switch status {
-        case .waitingForInput: return 0
-        case .running:         return 1
-        case .finished:        return 2
-        case .stale:           return 3
+        case .waitingForInput:        return 0
+        case .running:                return 1
+        case .awaitingBackgroundWork: return 2
+        case .idle:                   return 3
+        case .finished:               return 4
+        case .stale:                  return 5
         }
     }
 
@@ -705,15 +881,26 @@ final class SessionStore: ObservableObject {
         switch session.status {
         case .finished, .stale:
             return session.finishedAt ?? session.lastEventAt
-        case .waitingForInput, .running:
+        case .waitingForInput, .running, .idle, .awaitingBackgroundWork:
             return session.lastEventAt
         }
     }
 
     private func save() {
+        pendingSaveWorkItem?.cancel()
         let snapshot = sessions
-        saveDebounce.async {
+        let workItem = DispatchWorkItem {
             SessionStorePersistence.save(snapshot)
         }
+        pendingSaveWorkItem = workItem
+        saveDebounce.asyncAfter(deadline: .now() + saveDebounceInterval, execute: workItem)
+    }
+
+    /// Write out any debounced save immediately. Called on quit so the last
+    /// burst of hook events isn't lost to the trailing debounce window.
+    func flushPendingSave() {
+        pendingSaveWorkItem?.cancel()
+        pendingSaveWorkItem = nil
+        SessionStorePersistence.save(sessions)
     }
 }

@@ -20,9 +20,10 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
     func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
         switch event.hookEventName {
         case "SessionStart":
-            session.status = .running
+            session.status = .idle
             session.startedAt = now
             session.finishedAt = nil
+            session.sessionEnded = false
             session.lastEvent = "Session started"
             session.attentionRaisedAt = nil
 
@@ -48,6 +49,7 @@ struct FactoryDroidEventAdapter: AgentEventAdapter {
         case "SessionEnd":
             session.status = .finished
             session.finishedAt = now
+            session.sessionEnded = true
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = "Session ended"
@@ -78,9 +80,10 @@ struct CodexEventAdapter: AgentEventAdapter {
     func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
         switch event.hookEventName {
         case "SessionStart":
-            session.status = .running
+            session.status = .idle
             session.startedAt = min(session.startedAt, now)
             session.finishedAt = nil
+            session.sessionEnded = false
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = event.sourceDescription ?? "Session started"
@@ -158,9 +161,10 @@ struct CursorAgentEventAdapter: AgentEventAdapter {
     func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
         switch event.hookEventName {
         case "sessionStart":
-            session.status = .running
+            session.status = .idle
             session.startedAt = min(session.startedAt, now)
             session.finishedAt = nil
+            session.sessionEnded = false
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = "Session started"
@@ -225,6 +229,7 @@ struct CursorAgentEventAdapter: AgentEventAdapter {
         case "sessionEnd":
             session.status = .finished
             session.finishedAt = now
+            session.sessionEnded = true
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = "Session ended"
@@ -260,10 +265,11 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
     func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
         switch event.hookEventName {
         case "SessionStart":
-            session.status = .running
+            session.status = .idle
             session.startedAt = min(session.startedAt, now)
             session.finishedAt = nil
             session.turnEndedAt = nil
+            session.sessionEnded = false
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = event.sourceDescription ?? "Session started"
@@ -300,7 +306,7 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             // Any tool use means the turn is active again — cancel a pending
             // finish so the store sweep can't finish a resumed turn.
             session.turnEndedAt = nil
-            if session.status == .waitingForInput {
+            if session.status == .waitingForInput || session.status == .awaitingBackgroundWork {
                 session.status = .running
                 session.finishedAt = nil
                 session.attentionRaisedAt = nil
@@ -311,11 +317,11 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             // Don't finish outright: the turn ended but the session may still
             // have background work running (a same-tab sub-agent, or native
             // `run_in_background` shells / `Monitor` watchers). Record the turn
-            // end and stay `.running` (green-pending); `SessionStore` decides
+            // end and move to `.awaitingBackgroundWork`; `SessionStore` decides
             // when to flip to `.finished` once the work drains. See `turnEndedAt`.
             session.attentionRaisedAt = nil
             session.turnEndedAt = now
-            session.status = .running
+            session.status = .awaitingBackgroundWork
             session.finishedAt = nil
             if let t = session.transcriptPath, let tail = TranscriptReader.tailPreview(t) {
                 session.lastEvent = tail
@@ -329,10 +335,21 @@ struct ClaudeCodeEventAdapter: AgentEventAdapter {
             session.status = .finished
             session.finishedAt = now
             session.turnEndedAt = nil
+            session.sessionEnded = true
             session.attentionRaisedAt = nil
             if session.lastEvent.isEmpty || session.lastEvent == "Starting…" {
                 session.lastEvent = "Session ended"
             }
+
+        case "SubagentStop":
+            // Fired when a Task-tool subagent completes. No state change needed
+            // here — `SessionStore.apply` already bumps `lastEventAt` and
+            // re-runs `resolvePendingFinishes` after every event regardless of
+            // adapter handling, so simply registering this hook (see
+            // `hooks/claude-code-hooks-block.json`) makes the app re-check
+            // outstanding background work sooner than the 5s inventory-timer
+            // fallback would.
+            break
 
         default:
             break
@@ -344,9 +361,10 @@ struct GenericAgentEventAdapter: AgentEventAdapter {
     func apply(_ event: HookEvent, to session: inout DroidSession, now: Date) {
         switch event.hookEventName {
         case "SessionStart":
-            session.status = .running
+            session.status = .idle
             session.startedAt = now
             session.finishedAt = nil
+            session.sessionEnded = false
             session.attentionRaisedAt = nil
             session.lastEvent = "Session started"
         case "UserPromptSubmit":
@@ -356,9 +374,15 @@ struct GenericAgentEventAdapter: AgentEventAdapter {
             session.finishedAt = nil
             session.attentionRaisedAt = now
             session.lastEvent = event.message?.nilIfEmpty ?? "Waiting for input"
-        case "Stop", "SessionEnd":
+        case "Stop":
             session.status = .finished
             session.finishedAt = now
+            session.attentionRaisedAt = nil
+            session.lastEvent = event.lastAssistantMessage?.firstMeaningfulLine(maxLength: 200) ?? "Finished turn"
+        case "SessionEnd":
+            session.status = .finished
+            session.finishedAt = now
+            session.sessionEnded = true
             session.attentionRaisedAt = nil
             session.lastEvent = event.lastAssistantMessage?.firstMeaningfulLine(maxLength: 200) ?? "Finished turn"
         default:
@@ -372,6 +396,15 @@ private func applyPrompt(_ prompt: String?, to session: inout DroidSession) {
     session.finishedAt = nil
     session.turnEndedAt = nil
     session.attentionRaisedAt = nil
+    // A background task's completion can be redelivered into the conversation
+    // as a synthetic "user" turn whose prompt text is a raw
+    // `<task-notification>` wrapper (see `TranscriptBackgroundScan`). Show its
+    // friendly summary instead of leaking the raw markup, and don't let it
+    // count as the human's first prompt.
+    if let prompt, let summary = TaskNotificationText.friendlySummary(in: prompt) {
+        session.lastEvent = summary
+        return
+    }
     let line = prompt?.firstMeaningfulLine()
     session.lastEvent = line ?? "Working…"
     if (session.firstPrompt ?? "").isEmpty, let firstLine = line, !firstLine.isEmpty {

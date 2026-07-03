@@ -5,6 +5,8 @@ enum SessionStatus: String, Codable, Equatable {
     case waitingForInput
     case finished
     case stale
+    case idle
+    case awaitingBackgroundWork
 }
 
 enum MenuBarState: Equatable {

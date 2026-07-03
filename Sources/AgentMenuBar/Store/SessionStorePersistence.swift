@@ -18,7 +18,6 @@ enum SessionStorePersistence {
     static func save(_ sessions: [DroidSession]) {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? enc.encode(sessions) else { return }
         let tmp = fileURL.appendingPathExtension("tmp")
         try? data.write(to: tmp, options: .atomic)

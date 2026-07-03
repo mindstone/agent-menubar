@@ -16,6 +16,9 @@
     "PostToolUse": [
       { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
     ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
+    ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "$AGENT_MENUBAR_CLAUDE_HOOK", "timeout": 5 } ] }
     ],

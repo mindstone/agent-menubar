@@ -43,7 +43,7 @@ Factory and Codex `Stop` hooks are turn-scoped, not necessarily process/session 
 
 | Event | Status transition | Notes |
 |---|---|---|
-| `SessionStart` | → running | |
+| `SessionStart` | → idle | session alive, no prompt submitted yet — distinct from `running` so a freshly-opened tab doesn't read as actively working |
 | `UserPromptSubmit` | → running | user typed a new prompt |
 | `Notification` | → waitingForInput | permission prompt or 60s-idle alert |
 | `PermissionRequest` | → waitingForInput | Codex approval prompt |
@@ -57,14 +57,16 @@ Factory and Codex `Stop` hooks are turn-scoped, not necessarily process/session 
 | Cursor `afterShellExecution` / `afterMCPExecution` / `afterFileEdit` / `postToolUse` | → running | command/tool ran, agent working again |
 | Cursor `stop` | → finished | turn-scoped; `status` ∈ completed/aborted/error drives the row text |
 | Cursor `sessionEnd` | → finished | actually done |
-| Claude `SessionStart` / `UserPromptSubmit` | → running | PascalCase; payload already matches `HookEvent` fields |
+| Claude `SessionStart` | → idle | PascalCase; payload already matches `HookEvent` fields |
+| Claude `UserPromptSubmit` | → running | |
 | Claude `Notification(permission_prompt\|elicitation_dialog)` / `PermissionRequest` | → waitingForInput | Notification is scoped to the genuine needs-you types so `auth_success` etc. don't flip the row |
 | Claude `Notification(idle_prompt)` | → *(ignored)* | Fires ~60s after `Stop` when the user hasn't replied; the turn is already DONE. Treating it as waiting repaints every finished turn as a "question" — so it's dropped from the matcher **and** no-op'd in the adapter (`notification_type` guard) for safety against stale settings. |
-| Claude `PostToolUse` | → running | tool ran after approval — flips waiting back to running |
-| Claude `Stop` | → finished | turn-scoped, like Codex |
-| Claude `SessionEnd` | → finished | actually done |
+| Claude `PostToolUse` | → running | tool ran after approval — flips waiting **or** awaitingBackgroundWork back to running |
+| Claude `Stop` | → awaitingBackgroundWork | turn ended, but doesn't finish outright — a same-tab sub-agent or native background task (`run_in_background` shell, `Monitor` watcher) may still be running. `SessionStore.resolvePendingFinishes` promotes it to `.finished` once `TranscriptBackgroundScan`/`hasLiveRelatedSubAgent` report nothing outstanding (see `turnEndedAt`). |
+| Claude `SubagentStop` | → *(no-op)* | Fires when a Task-tool subagent completes. No status change needed — `SessionStore.apply` already re-runs `resolvePendingFinishes` after every event, so registering this hook just makes that recheck happen sooner than the 5s inventory-timer fallback. |
+| Claude `SessionEnd` | → finished | the CLI process is exiting, so nothing is left to spawn more background work — finish immediately rather than deferring |
 
-The store keeps the literal `.finished` value across `Stop`s; the popover treats `.finished` as `DONE` and the next `UserPromptSubmit` flips it back to `.running`.
+The store keeps the literal `.finished` value across `Stop`s (for Factory/Codex/Cursor, whose `Stop` finishes outright); the popover treats `.finished` as `DONE` and the next `UserPromptSubmit` flips it back to `.running`. `.idle` (session started, no prompt yet) and `.awaitingBackgroundWork` (Claude's deferred-finish state) are both "live" for `visibleSessions`/staleness purposes — see `SessionStatus.swift` — but neither is `running` or `waitingForInput`.
 
 `visibleSessions` collapses many historical agent runs sharing the same terminal tab into one row (most recent by `lastEventAt`) and drops sessions whose terminal tab is no longer open. This is driven by terminal inventory polling on a 5-second timer. Don't filter sessions for display anywhere else — use `store.visibleSessions`.
 
@@ -83,7 +85,7 @@ The store keeps the literal `.finished` value across `Stop`s; the popover treats
 - Backs up `~/.factory/settings.json`, `~/.codex/hooks.json`, and `~/.claude/settings.json` with timestamped `.bak` files first
 - Factory: registers bare-event hooks (`SessionStart`, `SessionEnd`, `Notification`, `Stop`, `UserPromptSubmit`) and matcher hooks (`PreToolUse`/`PostToolUse` with `matcher: "AskUser"`)
 - Codex: registers `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse` with `matcher: "request_user_input"`, `PostToolUse`, and `Stop`
-- Claude Code: registers `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`, `Stop`, `SessionEnd`, and `Notification` with `matcher: "permission_prompt|elicitation_dialog"` (intentionally **not** `idle_prompt` — see the status table). Uses the same nested `{matcher, hooks:[{type,command}]}` shape as Factory/Codex, and only touches the top-level `hooks` key so unrelated settings (model, permissions, …) survive.
+- Claude Code: registers `SessionStart`, `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`, `SubagentStop`, `Stop`, `SessionEnd`, and `Notification` with `matcher: "permission_prompt|elicitation_dialog"` (intentionally **not** `idle_prompt` — see the status table). Uses the same nested `{matcher, hooks:[{type,command}]}` shape as Factory/Codex, and only touches the top-level `hooks` key so unrelated settings (model, permissions, …) survive.
 
 `make install-cursor-hooks` is **separate** and intentionally not part of `install-hooks`. `~/.cursor/hooks.json` is shared with the Cursor IDE, so bundling it into the default target would make every IDE agent session spawn an (unfocusable, terminal-less) row. The Cursor merge uses a **different shape** from Factory/Codex: Cursor hook definitions are flat (`{command, timeout}`, no nested `hooks` array), event names are camelCase, and the file carries a top-level `version: 1`. It registers `sessionStart`, `beforeSubmitPrompt`, `beforeShellExecution`, `afterShellExecution`, `beforeMCPExecution`, `afterMCPExecution`, `afterFileEdit`, `postToolUse`, `stop`, and `sessionEnd`. Note that `cursor-agent` only fires a subset in interactive mode (and `beforeSubmitPrompt`/`stop` don't fire in headless `-p`), but registering the full set is harmless.
 

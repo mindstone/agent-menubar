@@ -33,6 +33,16 @@ struct DroidSession: Codable, Identifiable, Equatable {
     /// a session that has already finished.
     var turnEndedAt: Date?
 
+    /// Whether the underlying agent CLI process has actually exited
+    /// (`SessionEnd`/`sessionEnd`), as opposed to just finishing a turn
+    /// (`Stop`/`stop`) while the process keeps running at its own prompt.
+    /// Gates `SessionStore.shouldSettleToIdle`: a session whose process is
+    /// really gone must never settle back to `.idle`/"READY" just because its
+    /// terminal tab is still open. Reset to `false` on `SessionStart` so a
+    /// resumed session (same session id re-binding this row) becomes eligible
+    /// to settle again.
+    var sessionEnded: Bool = false
+
     /// The user's first prompt for this session, captured once on the first
     /// `UserPromptSubmit` and never overwritten. Surfaced in the popover as
     /// the "task" subtitle so a row at a glance says what the agent was
@@ -44,6 +54,15 @@ struct DroidSession: Codable, Identifiable, Equatable {
     /// refreshed on the same 5s cycle as the alive-id sweep. Optional because
     /// older sessions on disk won't have it until the next poll lands.
     var tabTitle: String?
+
+    /// AI-generated one-line paraphrase of `firstPrompt`/`lastEvent` — "what
+    /// is this agent's job right now" — for display in place of the raw
+    /// status text. Populated asynchronously by `SessionStore`'s job-summary
+    /// sweep (see `JobSummaryRunner`); `nil` until the first summary lands or
+    /// if generation ever fails, in which case callers fall back to
+    /// `lastEvent`. Persisted so a row keeps its last-known summary across an
+    /// app restart rather than flashing back to raw text.
+    var jobSummary: String?
 
     /// Which macOS app this session was launched from, derived from whichever
     /// id was captured by the bridge. Used by the UI to show a per-row label
@@ -80,8 +99,10 @@ struct DroidSession: Codable, Identifiable, Equatable {
         transcriptPath: URL?,
         attentionRaisedAt: Date?,
         turnEndedAt: Date? = nil,
+        sessionEnded: Bool = false,
         firstPrompt: String? = nil,
-        tabTitle: String? = nil
+        tabTitle: String? = nil,
+        jobSummary: String? = nil
     ) {
         self.id = id
         self.agentKind = agentKind
@@ -98,8 +119,10 @@ struct DroidSession: Codable, Identifiable, Equatable {
         self.transcriptPath = transcriptPath
         self.attentionRaisedAt = attentionRaisedAt
         self.turnEndedAt = turnEndedAt
+        self.sessionEnded = sessionEnded
         self.firstPrompt = firstPrompt
         self.tabTitle = tabTitle
+        self.jobSummary = jobSummary
     }
 
     enum CodingKeys: String, CodingKey {
@@ -118,8 +141,10 @@ struct DroidSession: Codable, Identifiable, Equatable {
         case transcriptPath
         case attentionRaisedAt
         case turnEndedAt
+        case sessionEnded
         case firstPrompt
         case tabTitle
+        case jobSummary
     }
 
     init(from decoder: Decoder) throws {
@@ -139,7 +164,9 @@ struct DroidSession: Codable, Identifiable, Equatable {
         transcriptPath = try c.decodeIfPresent(URL.self, forKey: .transcriptPath)
         attentionRaisedAt = try c.decodeIfPresent(Date.self, forKey: .attentionRaisedAt)
         turnEndedAt = try c.decodeIfPresent(Date.self, forKey: .turnEndedAt)
+        sessionEnded = try c.decodeIfPresent(Bool.self, forKey: .sessionEnded) ?? false
         firstPrompt = try c.decodeIfPresent(String.self, forKey: .firstPrompt)
         tabTitle = try c.decodeIfPresent(String.self, forKey: .tabTitle)
+        jobSummary = try c.decodeIfPresent(String.self, forKey: .jobSummary)
     }
 }

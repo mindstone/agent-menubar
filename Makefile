@@ -294,6 +294,7 @@ install-claude-hooks:
 	  | install_matcher_hook("Notification"; "permission_prompt|elicitation_dialog") \
 	  | install_hook("PermissionRequest") \
 	  | install_hook("PostToolUse") \
+	  | install_hook("SubagentStop") \
 	  | install_hook("Stop") \
 	  | install_hook("SessionEnd") \
 	' "$(CLAUDE_SETTINGS)" > "$(CLAUDE_SETTINGS).new"
@@ -322,6 +323,7 @@ uninstall-claude-hooks:
 	  | remove_hook("Notification") \
 	  | remove_hook("PermissionRequest") \
 	  | remove_hook("PostToolUse") \
+	  | remove_hook("SubagentStop") \
 	  | remove_hook("Stop") \
 	  | remove_hook("SessionEnd") \
 	  | if (.hooks // {}) == {} then del(.hooks) else . end \

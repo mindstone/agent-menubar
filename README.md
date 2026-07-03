@@ -20,7 +20,7 @@ AgentMenuBar is the dashboard we wanted: at a glance, how many agents are *runni
    - Factory Droid: `Notification`, `Stop`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, plus `PreToolUse`/`PostToolUse` for interactive `AskUser` prompts.
    - Codex CLI: `SessionStart`, `UserPromptSubmit`, `Notification`, `PermissionRequest`, `PreToolUse(request_user_input)`, `PostToolUse`, and turn-scoped `Stop`.
    - Cursor CLI (`cursor-agent`): `sessionStart`, `beforeSubmitPrompt`, `beforeShellExecution`/`beforeMCPExecution`, `afterShellExecution`/`afterMCPExecution`, `afterFileEdit`, `postToolUse`, turn-scoped `stop`, and `sessionEnd`.
-   - Claude Code: `SessionStart`, `UserPromptSubmit`, `Notification` (`permission_prompt`/`elicitation_dialog` only), `PermissionRequest`, `PostToolUse`, turn-scoped `Stop`, and `SessionEnd`.
+   - Claude Code: `SessionStart`, `UserPromptSubmit`, `Notification` (`permission_prompt`/`elicitation_dialog` only), `PermissionRequest`, `PostToolUse`, `SubagentStop`, turn-scoped `Stop`, and `SessionEnd`.
 2. Capturing each session's `ITERM_SESSION_ID` at start.
 3. Showing one row per active agent in a popover, with click-to-focus that selects the exact iTerm window + tab.
 
@@ -33,7 +33,7 @@ No accessibility automation, no terminal scraping. Hooks + iTerm's own session U
 | OpenAI Codex CLI | `~/.codex/hooks.json` | `PermissionRequest`, `Notification`, and `PreToolUse(request_user_input)` | turn-scoped `Stop` | Works after reviewing/trusting the hook in `/hooks`. Tested with real Codex `UserPromptSubmit`/`PostToolUse` hooks and manual lifecycle events. |
 | Factory Droid | `~/.factory/settings.json` | `Notification` and `PreToolUse` matcher `AskUser` | turn-scoped `Stop` or `SessionEnd` | Existing Droid sessions need restart after hook changes because Droid snapshots hooks at startup. |
 | Cursor CLI (`cursor-agent`) | `~/.cursor/hooks.json` (shared with the Cursor IDE) | `beforeShellExecution` / `beforeMCPExecution` (command/MCP approval gate) | turn-scoped `stop` or `sessionEnd` | Install via `make install-cursor-hooks` (kept out of the default `install-hooks` because the file is shared with the IDE). Cursor has no notification/permission-request event and its `AskQuestion` picker doesn't fire tool hooks, so a clarifying question isn't observable — see Known limits. `beforeSubmitPrompt`/`stop` only fire in interactive mode, not headless `-p`. |
-| Claude Code | `~/.claude/settings.json` | `PermissionRequest` and `Notification` (`permission_prompt`/`elicitation_dialog`) | turn-scoped `Stop` or `SessionEnd` | Included in the default `install-hooks`. The jq merge only touches the `hooks` key, so other settings (model, permissions, …) are preserved. `idle_prompt` notifications (the ~60s post-turn nudge) are intentionally ignored so a finished turn doesn't get repainted as waiting. Restart in-flight sessions and use `/hooks` to verify. |
+| Claude Code | `~/.claude/settings.json` | `PermissionRequest` and `Notification` (`permission_prompt`/`elicitation_dialog`) | turn-scoped `Stop` (deferred — see below) or `SessionEnd` | Included in the default `install-hooks`. The jq merge only touches the `hooks` key, so other settings (model, permissions, …) are preserved. `idle_prompt` notifications (the ~60s post-turn nudge) are intentionally ignored so a finished turn doesn't get repainted as waiting. `Stop` doesn't finish outright: it moves to `awaitingBackgroundWork` until same-tab sub-agents or native background tasks (`run_in_background` shells, `Monitor` watchers) drain, tracked via `SubagentStop` and transcript scanning. Restart in-flight sessions and use `/hooks` to verify. |
 
 Both CLIs use the same socket bridge and persisted session store. CLI-specific behavior lives in `AgentEventAdapter`, so adding another agent should mean adding a thin hook wrapper plus one adapter instead of changing the UI or store shape.
 
@@ -41,7 +41,7 @@ For the full process, see [Adding a New CLI Agent](docs/adding-new-cli.md).
 
 ## Status
 
-**v1.** End-to-end pipeline is implemented and smoke-tested for Factory Droid, Codex CLI, Cursor CLI, and Claude Code (build → install → hook event → socket → persisted row → popover state). Build is clean. The Cursor and Claude Code lifecycles were verified through the bridge into the running app — Cursor (`sessionStart → beforeSubmitPrompt → beforeShellExecution → afterShellExecution → stop`) and Claude Code (`SessionStart → UserPromptSubmit → PermissionRequest → PostToolUse → Stop → Notification(idle_prompt)`) mapping to running → running → waiting → running → finished → **finished** (the trailing idle nudge is ignored, not treated as a fresh question). State transitions are also covered by unit tests in `Tests/`.
+**v1.** End-to-end pipeline is implemented and smoke-tested for Factory Droid, Codex CLI, Cursor CLI, and Claude Code (build → install → hook event → socket → persisted row → popover state). Build is clean. The Cursor and Claude Code lifecycles were verified through the bridge into the running app — Cursor (`sessionStart → beforeSubmitPrompt → beforeShellExecution → afterShellExecution → stop`) and Claude Code (`SessionStart → UserPromptSubmit → PermissionRequest → PostToolUse → Stop → Notification(idle_prompt)`) mapping to idle → running → waiting → running → **awaitingBackgroundWork** → awaitingBackgroundWork (the trailing idle nudge is ignored, not treated as a fresh question; `SessionStore` promotes to `finished` once no background work remains outstanding). State transitions are also covered by unit tests in `Tests/`.
 
 ## Architecture
 
@@ -105,9 +105,11 @@ You'll see four notifications and one row in the popover, ending in "Finished ta
 
 | State | Colour | When |
 |---|---|---|
-| running | blue | After `SessionStart`/`sessionStart`, a prompt submit, or any tool/file/shell activity |
+| idle (READY) | cyan | After `SessionStart`/`sessionStart` — session alive, no prompt submitted yet |
+| running | blue | After a prompt submit, or any tool/file/shell activity |
 | waitingForInput | orange | On Factory `Notification`, Factory `AskUser`, Codex `PermissionRequest`, Codex `Notification`, Codex Plan-mode `request_user_input`, Cursor `beforeShellExecution`/`beforeMCPExecution`, or Claude Code `PermissionRequest`/`Notification(permission_prompt\|elicitation_dialog)`. Claude Code `idle_prompt` (post-turn idle nudge) is **not** a waiting signal — a finished turn stays DONE. |
-| finished | green | After `Stop`/`stop` or `SessionEnd`/`sessionEnd` |
+| awaitingBackgroundWork (BACKGROUND) | purple | Claude Code only: after `Stop`, while a same-tab sub-agent or native background task (`run_in_background` shell, `Monitor` watcher) is still outstanding |
+| finished | green | After `Stop`/`stop` or `SessionEnd`/`sessionEnd` (Claude Code: once `awaitingBackgroundWork` drains) |
 | stale | grey | A previously-running session whose process disappeared |
 
 The menu bar icon is grey when nothing's tracked, shows a count when sessions are active, and turns orange with an alert glyph when at least one session is `waitingForInput`.

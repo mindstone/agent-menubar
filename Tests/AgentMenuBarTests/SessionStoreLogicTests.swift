@@ -106,6 +106,147 @@ final class SessionStoreLogicTests: XCTestCase {
         XCTAssertFalse(SessionStore.shouldStale(s, tabAlive: false, hasBinding: false, idleTTL: idleTTL, now: now))
     }
 
+    /// The exact real-world case reported in the popover: a session that only
+    /// ever received `SessionStart` (no prompt typed yet) sits at `.idle`
+    /// for 31+ minutes with its tab still open. `shouldStale`'s one-hour TTL
+    /// correctly leaves it alone — this isn't a staleness bug, it just confirms
+    /// `.idle` (a live status) shouldn't age out well within the TTL window.
+    func testFreshSessionWithNoPromptYetIsNotStaledAt31Minutes() {
+        let s = session(id: "s", status: .idle, lastEventAt: t0)
+        let now = t0.addingTimeInterval(31 * 60)
+        XCTAssertFalse(SessionStore.shouldStale(s, tabAlive: true, hasBinding: true, idleTTL: idleTTL, now: now))
+    }
+
+    /// `.idle` (session started, no prompt typed yet) ages out like any other
+    /// live status once its tab is gone and it has been silent past the TTL.
+    func testIdleSessionAgesWhenTabDead() {
+        let s = session(id: "s", status: .idle, lastEventAt: t0)
+        let now = t0.addingTimeInterval(idleTTL + 1)
+        XCTAssertTrue(SessionStore.shouldStale(s, tabAlive: false, hasBinding: true, idleTTL: idleTTL, now: now))
+    }
+
+    /// `.awaitingBackgroundWork` (a Stop deferred behind outstanding background
+    /// work) ages out too once its tab is gone and it has been silent past the
+    /// TTL — the pending-finish marker alone shouldn't keep it alive forever.
+    func testAwaitingBackgroundWorkAgesWhenTabDead() {
+        let s = session(id: "s", status: .awaitingBackgroundWork, lastEventAt: t0)
+        let now = t0.addingTimeInterval(idleTTL + 1)
+        XCTAssertTrue(SessionStore.shouldStale(s, tabAlive: false, hasBinding: true, idleTTL: idleTTL, now: now))
+    }
+
+    // MARK: - shouldSettleToIdle / shouldCloseIdle (finished <-> idle settle sweep)
+
+    private let grace: TimeInterval = 5
+
+    /// A finished session whose tab is still open settles to `.idle` once the
+    /// grace period (long enough for the notch's completion pop to finish
+    /// playing) has elapsed since it finished.
+    func testFinishedSessionWithLiveTabSettlesToIdleAfterGrace() {
+        var s = session(id: "s", status: .finished, lastEventAt: t0)
+        s.finishedAt = Date().addingTimeInterval(-10)
+        XCTAssertTrue(SessionStore.shouldSettleToIdle(s, tabAlive: true, hasBinding: true, grace: grace, now: Date()))
+    }
+
+    /// Within the grace window — e.g. right after the notch's "just finished"
+    /// pop started — the row must not settle to `.idle` yet, so the pop isn't
+    /// raced away.
+    func testFinishedSessionWithLiveTabDoesNotSettleWithinGrace() {
+        var s = session(id: "s", status: .finished, lastEventAt: t0)
+        s.finishedAt = Date().addingTimeInterval(-1)
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: true, hasBinding: true, grace: grace, now: Date()))
+    }
+
+    /// A finished session whose tab is gone stays `.finished` (bound for the
+    /// Closed section) regardless of how much time has passed — it doesn't
+    /// settle to `.idle`.
+    func testFinishedSessionWithDeadTabDoesNotSettleToIdle() {
+        var s = session(id: "s", status: .finished, lastEventAt: t0)
+        s.finishedAt = Date().addingTimeInterval(-10)
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: false, hasBinding: true, grace: grace, now: Date()))
+    }
+
+    /// A `.finished` session from a real process exit (`SessionEnd`, not `Stop`)
+    /// must never settle to `.idle` even with the tab open and the grace period
+    /// elapsed — there's no agent left to be "ready".
+    func testSessionEndedFinishedSessionDoesNotSettleToIdleEvenWithLiveTab() {
+        var s = session(id: "s", status: .finished, lastEventAt: t0)
+        s.finishedAt = Date().addingTimeInterval(-10)
+        s.sessionEnded = true
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: true, hasBinding: true, grace: grace, now: Date()))
+    }
+
+    /// A finished session with no terminal binding at all never settles to
+    /// `.idle` — there's no tab to have stayed open.
+    func testFinishedSessionWithNoBindingDoesNotSettleToIdle() {
+        var s = session(id: "s", status: .finished, lastEventAt: t0, iterm: nil)
+        s.finishedAt = Date().addingTimeInterval(-10)
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: false, hasBinding: false, grace: grace, now: Date()))
+    }
+
+    /// An idle session with its tab still open has nothing to close out.
+    func testIdleSessionWithLiveTabDoesNotCloseIdle() {
+        let s = session(id: "s", status: .idle, lastEventAt: t0)
+        XCTAssertFalse(SessionStore.shouldCloseIdle(s, tabAlive: true, hasBinding: true))
+    }
+
+    /// Once an idle session's bound tab is confirmed gone, it should close out
+    /// to `.finished` promptly — unlike running/waiting sessions, `.idle` means
+    /// nothing is happening, so there's no ambiguity to protect against.
+    func testIdleSessionWithDeadTabClosesIdle() {
+        let s = session(id: "s", status: .idle, lastEventAt: t0)
+        XCTAssertTrue(SessionStore.shouldCloseIdle(s, tabAlive: false, hasBinding: true))
+    }
+
+    /// An orphan idle session (no terminal binding) has no tab to lose, so it
+    /// never closes via this path.
+    func testIdleSessionWithNoBindingDoesNotCloseIdle() {
+        let s = session(id: "s", status: .idle, lastEventAt: t0, iterm: nil)
+        XCTAssertFalse(SessionStore.shouldCloseIdle(s, tabAlive: false, hasBinding: false))
+    }
+
+    /// Neither function applies to statuses outside their target state —
+    /// a running session is left alone by both, regardless of tab/binding.
+    func testRunningSessionIsUntouchedByEitherSettleFunction() {
+        let s = session(id: "s", status: .running, lastEventAt: t0)
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: true, hasBinding: true, grace: grace, now: Date()))
+        XCTAssertFalse(SessionStore.shouldSettleToIdle(s, tabAlive: false, hasBinding: true, grace: grace, now: Date()))
+        XCTAssertFalse(SessionStore.shouldCloseIdle(s, tabAlive: true, hasBinding: true))
+        XCTAssertFalse(SessionStore.shouldCloseIdle(s, tabAlive: false, hasBinding: true))
+    }
+
+    // MARK: - migrateLegacyPendingFinish (upgrade path for the pre-awaitingBackgroundWork encoding)
+
+    /// A row persisted by a build before `.awaitingBackgroundWork` existed
+    /// encoded a pending finish as `.running` + `turnEndedAt`. Confirmed against
+    /// the app's own live `sessions.json`: without this migration, such a row
+    /// would never satisfy `resolvePendingFinishes`'s `.awaitingBackgroundWork`
+    /// guard, silently losing its `turnEndedAt` marker and getting stuck RUNNING
+    /// forever while its tab stays open.
+    func testMigrateLegacyPendingFinishUpgradesRunningWithTurnEndedAt() {
+        var s = session(id: "s", status: .running, lastEventAt: t0)
+        s.turnEndedAt = t0
+        let migrated = SessionStore.migrateLegacyPendingFinish(s)
+        XCTAssertEqual(migrated.status, .awaitingBackgroundWork)
+        XCTAssertEqual(migrated.turnEndedAt, t0)
+    }
+
+    /// A plain running session with no pending finish is untouched.
+    func testMigrateLegacyPendingFinishLeavesOrdinaryRunningAlone() {
+        let s = session(id: "s", status: .running, lastEventAt: t0)
+        let migrated = SessionStore.migrateLegacyPendingFinish(s)
+        XCTAssertEqual(migrated.status, .running)
+        XCTAssertNil(migrated.turnEndedAt)
+    }
+
+    /// A row already in the new encoding passes through unchanged (idempotent).
+    func testMigrateLegacyPendingFinishIsNoOpForCurrentEncoding() {
+        var s = session(id: "s", status: .awaitingBackgroundWork, lastEventAt: t0)
+        s.turnEndedAt = t0
+        let migrated = SessionStore.migrateLegacyPendingFinish(s)
+        XCTAssertEqual(migrated.status, .awaitingBackgroundWork)
+        XCTAssertEqual(migrated.turnEndedAt, t0)
+    }
+
     // MARK: - hasLiveRelatedSubAgent (defer-finish gate, sub-agent half)
 
     /// A driver that just ended its turn must not be considered done while a
@@ -127,6 +268,22 @@ final class SessionStoreLogicTests: XCTestCase {
     func testFinishedSubAgentDoesNotBlock() {
         let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
         let sub = session(id: "sub", status: .finished, lastEventAt: t1, iterm: "iterm-1")
+        XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// A sibling deferred behind its own outstanding background work also
+    /// blocks — it's genuinely still live, just resting on `Stop`.
+    func testAwaitingBackgroundWorkSubAgentBlocksFinish() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let sub = session(id: "sub", status: .awaitingBackgroundWork, lastEventAt: t1, iterm: "iterm-1")
+        XCTAssertTrue(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
+    }
+
+    /// An idle sibling (session started, no prompt typed yet) has nothing in
+    /// flight and shouldn't block a driver's finish.
+    func testIdleSubAgentDoesNotBlock() {
+        let driver = session(id: "driver", status: .running, lastEventAt: t0, iterm: "iterm-1")
+        let sub = session(id: "sub", status: .idle, lastEventAt: t1, iterm: "iterm-1")
         XCTAssertFalse(SessionStore.hasLiveRelatedSubAgent(driver, in: [driver, sub]))
     }
 

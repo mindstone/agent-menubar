@@ -57,7 +57,7 @@ struct SessionRowView: View {
                         .help(firstPrompt)
                 }
 
-                Text(session.lastEvent)
+                Text(session.jobSummary ?? session.lastEvent)
                     .font(.system(size: 12))
                     .foregroundStyle(waiting ? .primary : .secondary)
                     .lineLimit(isExpanded ? nil : 2)
@@ -74,12 +74,12 @@ struct SessionRowView: View {
             Rectangle()
                 .fill(accentColor)
                 .frame(width: 3)
-                .opacity(waiting || session.status == .running ? 1 : 0)
+                .opacity(waiting || session.status == .running || session.status == .awaitingBackgroundWork ? 1 : 0)
         }
         .contentShape(Rectangle())
         .gesture(rowTapGesture)
         .onAppear {
-            if session.status == .running {
+            if session.status == .running || session.status == .awaitingBackgroundWork {
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -117,6 +117,15 @@ struct SessionRowView: View {
                 .fill(Color.blue)
                 .frame(width: 10, height: 10)
                 .opacity(pulse ? 0.35 : 1.0)
+        case .awaitingBackgroundWork:
+            Circle()
+                .fill(Color.purple)
+                .frame(width: 10, height: 10)
+                .opacity(pulse ? 0.35 : 1.0)
+        case .idle:
+            Circle()
+                .fill(Color.cyan)
+                .frame(width: 8, height: 8)
         case .finished:
             Circle()
                 .fill(Color.green)
@@ -135,6 +144,10 @@ struct SessionRowView: View {
             pill(text: "WAITING", color: .orange)
         case .running:
             pill(text: "RUNNING", color: .blue)
+        case .awaitingBackgroundWork:
+            pill(text: "BACKGROUND", color: .purple)
+        case .idle:
+            pill(text: "READY", color: .cyan)
         case .finished:
             pill(text: "DONE", color: .green)
         case .stale:
@@ -178,18 +191,21 @@ struct SessionRowView: View {
 
     private var accentColor: Color {
         switch session.status {
-        case .running:         return .blue
-        case .waitingForInput: return .orange
-        case .finished:        return .green
-        case .stale:           return .gray
+        case .running:                return .blue
+        case .waitingForInput:        return .orange
+        case .awaitingBackgroundWork: return .purple
+        case .idle:                   return .cyan
+        case .finished:               return .green
+        case .stale:                  return .gray
         }
     }
 
     private var rowBackground: Color {
         switch session.status {
-        case .waitingForInput: return Color.orange.opacity(0.14)
-        case .running:         return Color.blue.opacity(0.07)
-        default:               return .clear
+        case .waitingForInput:        return Color.orange.opacity(0.14)
+        case .running:                return Color.blue.opacity(0.07)
+        case .awaitingBackgroundWork: return Color.purple.opacity(0.07)
+        default:                      return .clear
         }
     }
 

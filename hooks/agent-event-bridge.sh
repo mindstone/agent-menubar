@@ -6,8 +6,19 @@
 # and forwards it to AgentMenuBar.app over a Unix domain socket.
 #
 # Must NEVER block the agent: any failure exits 0 with no output.
+#
+# AgentMenuBar itself shells out to these same CLIs headlessly (see
+# JobSummaryRunner) to generate a one-line status summary. Those calls set
+# AGENTMENUBAR_SUPPRESS_HOOKS=1 so this bridge is a no-op for them — otherwise
+# every summary the app generates would round-trip back in as a new tracked
+# session (SessionStart/UserPromptSubmit/Stop with a real session id),
+# spawning a phantom row for its own internal call.
 
 set -u
+
+if [ "${AGENTMENUBAR_SUPPRESS_HOOKS:-}" = "1" ]; then
+    exit 0
+fi
 
 AGENT_KIND="${1:-unknown}"
 LOG_DIR="${HOME}/Library/Logs/AgentMenuBar"

@@ -25,7 +25,8 @@ enum TranscriptReader {
                let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
                let text = extractText(obj)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !text.isEmpty {
-                return clip(text)
+                let display = TaskNotificationText.friendlySummary(in: text) ?? text
+                return clip(display)
             }
         }
         // Plain-text fallback: last non-empty line, clipped.
@@ -55,7 +56,14 @@ enum TranscriptReader {
     }
 
     private static func clip(_ s: String, max: Int = 200) -> String {
-        if s.count <= max { return s }
-        return String(s.prefix(max)) + "…"
+        // Status text renders as a single line in the UI, so collapse any
+        // embedded newlines/whitespace runs before truncating by length —
+        // otherwise a multi-line source (e.g. stray raw markup) survives
+        // truncation as several garbled lines.
+        let collapsed = s
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        if collapsed.count <= max { return collapsed }
+        return String(collapsed.prefix(max)) + "…"
     }
 }
